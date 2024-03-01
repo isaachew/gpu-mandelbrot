@@ -105,6 +105,9 @@ void main(){
     }
 }
 `)
+function palette(iters){
+
+}
 console.time("hi")
 console.log(performance.now())
 var shaderProgram=glcont.createProgram()
@@ -151,20 +154,30 @@ function genReference(cx,cy){
 
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
 }
-function genReference(cx,cy){
+function genReference(cval){
     var farr=new Float32Array(32768)
-    var [zx,zy]=[0,0];
-    var occurred=new Map()
-    var period=null
+    var zval=new BigComplex(0,0);
+    //var occurred=new Map()
+    //var period=null
+    var escaped=false
     for(var i=0;i<16384;i++){
+        var [zx,zy]=zval.toFloats()
         farr[i*2]=zx;
         farr[i*2+1]=zy;
-        [zx,zy]=[zx*zx-zy*zy+cx,2*zx*zy+cy];
+        if(!escaped){
+            try{
+                zval=zval.mul(zval).add(cval)
+            }catch{
+                escaped=true
+            }
+        }
+        /*
         if(occurred.has(""+[zx,zy])&&period==null){
             console.log("found",occurred.get(""+[zx,zy]),i)
             period=occurred.get(""+[zx,zy])-i
         }
         occurred.set(""+[zx,zy],i)
+        */
     }
 
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
@@ -180,27 +193,88 @@ glcont.uniform2fv(offsetIndex,[0,0])
 glcont.uniform1f(scaleIndex,2)
 glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 console.timeEnd("hi")
-var curx=0,cury=0,curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3)
-var curref=[0,1]//e-6
-genReference(0,1)
-glcont.uniform2fv(offsetIndex,[curx,cury])
+var fixedFactor=736n
+function getDecimalValue(num,digits=Number(fixedFactor)+1){
+    st=""
+    if(num<0){
+        num=-num
+        st+="-"
+    }
+    for(var i=0;i<digits;i++){
+        if(i==digits-1)num+=1n<<(fixedFactor-1n)//round
+        var nump=num>>fixedFactor
+        st+=nump
+        if(i==0)st+="."
+        num-=nump<<fixedFactor
+        num*=10n
+    }
+    return st
+}
+class BigComplex{
+    real;imag
+    constructor(re,im){
+        if(typeof re=="bigint"){
+            var unit=1n<<fixedFactor
+            if(re>unit*1000n||re<-unit*1000n){
+                throw "too big"
+            }
+            if(im>unit*1000n||im<-unit*1000n){
+                throw "too big"
+            }
+            this.real=re,this.imag=im
+        }else{
+            this.real=BigInt(Math.round(re*2**Number(fixedFactor)))
+            this.imag=BigInt(Math.round(im*2**Number(fixedFactor)))
+        }
+    }
+    add(oth){
+        return new BigComplex(this.real+oth.real,this.imag+oth.imag)
+    }
+    sub(oth){
+        return new BigComplex(this.real-oth.real,this.imag-oth.imag)
+    }
+    mul(oth){
+        var realPart=(this.real*oth.real-this.imag*oth.imag)>>fixedFactor
+        var imagPart=(this.real*oth.imag+this.imag*oth.real)>>fixedFactor
+        return new BigComplex(realPart,imagPart)
+    }
+    toFloats(){
+        var factor=2**Number(fixedFactor)
+        return [Number(this.real)/factor,Number(this.imag)/factor]
+    }
+    rad(){
+        return Math.hypot(...this.toFloats())
+    }
+}
+var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3)
+var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
+genReference(new BigComplex(0,1))
+glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
 glcont.uniform1f(scaleIndex,curzoom)
 glcont.uniform1f(sensitivityIndex,glitchSensitivity/curzoom)
 glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 function render(){
-    if(curzoom<=1e-13){
+    if(curzoom<=1e-33){
         console.log("limit")
-        curzoom=1e-13
+        curzoom=1e-33
     }
-    glcont.uniform2fv(offsetIndex,[curx,cury])
+
+    var pnow=performance.now()
+
+    glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
     glcont.uniform1f(sensitivityIndex,glitchSensitivity/curzoom)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+    var x=new Uint8Array(4096)
+    glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
+    var anow=performance.now()
+    console.log(anow-pnow,"ms")
 }
 document.getElementById("webgl-canvas").addEventListener("mousedown",e=>{
     var crect=e.target.getBoundingClientRect()
-    curx+=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
-    cury+=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
+    var xoffset=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
+    var yoffset=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
+    curpos=curpos.add(new BigComplex(xoffset,yoffset))
     if(e.button==0)curzoom/=2
     if(e.button==2)curzoom*=2
     render()
@@ -219,14 +293,12 @@ document.addEventListener("keydown",e=>{
     if(e.key=="a")curzoom/=2
     if(e.key=="b")curzoom*=2
     if(e.key=="p"){
-        genReference(curx+curref[0],cury+curref[1])
-        curref=[curx+curref[0],cury+curref[1]];
-        curx=0,cury=0
+        curref=curpos;
+        genReference(curpos)
     }
     if(e.key=="r"){
-        genReference(curx+curref[0]+curox,cury+curref[1]+curoy)
-        curref=[curx+curref[0]+curox,cury+curref[1]+curoy];
-        curx=-curox,cury=-curoy
+        curref=curpos.add(new BigComplex(curox,curoy));
+        genReference(curref)
         glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"paletteparam"),0)
         curval=0
     }
