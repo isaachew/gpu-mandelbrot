@@ -32,7 +32,7 @@ var fragShader=createShader(glcont,glcont.FRAGMENT_SHADER,`#version 300 es
 precision highp float;
 precision highp int;
 in vec2 fractalPos;
-//uniform vec2 juliaPos;
+uniform int numzooms;//additional number of zooms to do after float
 uniform highp sampler2D reference;
 uniform float glitchSensitivity;
 uniform int paletteparam;
@@ -134,24 +134,22 @@ vec4 palette(int iters){
     fullbr*=cos(float(iters)*0.0085)*0.25+0.75;
     return vec4(fullbr,1.0);
 }
-vec2 getRef(int iters){
-    return texelFetch(reference,ivec2(iters,0),0).xy;
+exp_complex getRef(int iters){
+    vec4 curValue=texelFetch(reference,ivec2(iters,0),0);
+    return exp_complex(curValue.xy,int(curValue.z));
 }
 
 void main(){
     //gl_FragColor=vec4(texture2D(reference,fractalPos).xyz,1.0);
 
-    exp_complex curpos=exp_complex(vec2(0.0,0.0),-21474836);
+    exp_complex curpos=fromfloats(vec2(0.0,0.0));
     int numIters=-1;
     bool isglitch=false;
     float curlderiv=0.0;
-    float minlderiv=1e18;
-    float maxlderiv=1e18;
-    float curerr=0.0;
-    float minabs=5.0;
-    //vec2 cderiv=vec2(0.0,0.0);
+    exp_complex floatexpPosition=fromfloats(fractalPos);
+    floatexpPosition.exponent+=numzooms;
     for(int i=0;i<10000;i++){
-        exp_complex curref=fromfloats(getRef(i));
+        exp_complex curref=getRef(i);
         exp_complex unperturbed=add(curpos,curref);
         if(unperturbed.exponent>=1){
             numIters=i;
@@ -170,6 +168,7 @@ void main(){
                 //numIters+=23424;
                 //break;
                 isglitch=true;
+                break;
             }
         }
 
@@ -178,11 +177,12 @@ void main(){
         }
 
         exp_complex refoffset=mulpow2(1,mul(curref,curpos));
-        curpos=add(add(mul(curpos,curpos),refoffset),fromfloats(fractalPos));
+        curpos=add(add(mul(curpos,curpos),refoffset),floatexpPosition);
         if(paletteparam==0){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
-            if(lrad_cur-curlderiv>-log2(glitchSensitivity)){
+            if(lrad_cur-curlderiv>-glitchSensitivity){
                 isglitch=true;
+                break;
             }
         }
     }
@@ -278,6 +278,36 @@ function genReference(cval){
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
 
 }
+var farr=new Float32Array(49152)
+function genReference(cval){
+    var zval=new BigComplex(0,0);
+    //var occurred=new Map()
+    //var period=null
+    var escaped=false
+    for(var i=0;i<16384;i++){
+        var [zx,zy,zexp]=zval.toFloatexp()
+        farr[i*3]=zx;
+        farr[i*3+1]=zy;
+        farr[i*3+2]=zexp;
+        if(!escaped){
+            try{
+                zval=zval.mul(zval).add(cval)
+            }catch{
+                escaped=true
+            }
+        }
+        /*
+        if(occurred.has(""+[zx,zy])&&period==null){
+            console.log("found",occurred.get(""+[zx,zy]),i)
+            period=occurred.get(""+[zx,zy])-i
+        }
+        occurred.set(""+[zx,zy],i)
+        */
+    }
+
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,16384,1,0,glcont.RGB,glcont.FLOAT,farr)
+
+}
 glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
 glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MAG_FILTER,glcont.NEAREST)
 glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
@@ -338,6 +368,12 @@ class BigComplex{
         var factor=2**Number(fixedFactor)
         return [Number(this.real)/factor,Number(this.imag)/factor]
     }
+    toFloatexp(){
+        var floats=this.toFloats()
+        var expFactor=Math.floor(Math.log2(Math.hypot(...floats)))
+        if(!Number.isFinite(expFactor))return [0,0,-21474836]//yes
+        return [floats[0]*2**-expFactor,floats[1]*2**-expFactor,expFactor]
+    }
     rad(){
         return Math.hypot(...this.toFloats())
     }
@@ -350,16 +386,24 @@ glcont.uniform1f(scaleIndex,curzoom)
 glcont.uniform1f(sensitivityIndex,glitchSensitivity/curzoom)
 glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 function render(){
-    if(curzoom<=1e-33){
+    if(curzoom<=1e-250){
         console.log("limit")
-        curzoom=1e-33
+        curzoom=1e-250
     }
 
     var pnow=performance.now()
 
+    var fcoords=curpos.sub(curref).toFloats()
+    var clscale=Math.floor(Math.log2(curzoom))
+    glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+
+    glcont.uniform1f(scaleIndex,curzoom*2**-clscale);
+    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"numzooms"),clscale)
+    /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
-    glcont.uniform1f(sensitivityIndex,glitchSensitivity/curzoom)
+    */
+    glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
     var x=new Uint8Array(4096)
     glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
