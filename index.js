@@ -33,6 +33,8 @@ precision highp float;
 precision highp int;
 in vec2 fractalPos;
 uniform int numzooms;//additional number of zooms to do after float
+
+uniform int maxiters;
 uniform highp sampler2D reference;
 uniform float glitchSensitivity;
 uniform int paletteparam;
@@ -58,16 +60,8 @@ float iexp2(int x){
 }
 //Complex floatexp
 exp_complex add(exp_complex a,exp_complex b){
-    int expdiff=a.exponent-b.exponent;
-    exp_complex result;
     int maxexp=max(a.exponent,b.exponent);
-    result.mantissa=iexp2(a.exponent-maxexp)*a.mantissa+iexp2(b.exponent-maxexp)*b.mantissa;
-
-    if(result.mantissa==vec2(0.0,0.0)){//zero
-        result.exponent=-10000;
-        return result;
-    }
-    result.exponent=maxexp;
+    exp_complex result=exp_complex(iexp2(a.exponent-maxexp)*a.mantissa+iexp2(b.exponent-maxexp)*b.mantissa,maxexp);
     /*
     if(a.exponent<b.exponent){
         result.mantissa=b.mantissa+a.mantissa*iexp2(expdiff);
@@ -79,7 +73,10 @@ exp_complex add(exp_complex a,exp_complex b){
     */
     int expneeded=ilog2(dot(result.mantissa,result.mantissa))>>1;
     result.mantissa*=iexp2(-expneeded);
-    result.exponent+=expneeded;
+    result.exponent=maxexp+expneeded;
+    if(result.mantissa==vec2(0.0,0.0)){//zero
+        result.exponent=-21474836;
+    }
     return result;
 }
 exp_complex neg(exp_complex x){
@@ -89,16 +86,13 @@ exp_complex sub(exp_complex a,exp_complex b){
     return add(a,neg(b));
 }
 exp_complex mul(exp_complex a,exp_complex b){
-    exp_complex result;
-    result.mantissa=complexmul(a.mantissa,b.mantissa);
-    if(result.mantissa==vec2(0.0,0.0)){//zero
-        result.exponent=-10000;
-        return result;
-    }
-    result.exponent=a.exponent+b.exponent;
+    exp_complex result=exp_complex(complexmul(a.mantissa,b.mantissa),a.exponent+b.exponent);
     if(dot(result.mantissa,result.mantissa)>=4.0){
         result.mantissa*=0.5;
         result.exponent++;
+    }
+    if(result.mantissa==vec2(0.0,0.0)){//zero
+        result.exponent=-21474836;
     }
     return result;
 }
@@ -106,24 +100,14 @@ exp_complex mulpow2(int a,exp_complex b){//a is powers of 2
     b.exponent+=a;
     return b;
 }
-exp_complex mul(float a,exp_complex b){
-    exp_complex result;
-    result.mantissa=log2(a)*b.mantissa;
-    result.exponent=b.exponent;
-    if(dot(result.mantissa,result.mantissa)>=4.0){
-        result.mantissa*=0.5;
-        result.exponent++;
-    }
-    return result;
-}
 
 vec2 tofloats(exp_complex x){
-    return x.mantissa*exp2(float(x.exponent));
+    return x.mantissa*iexp2(x.exponent);
 }
 exp_complex fromfloats(vec2 x){
     if(x==vec2(0.0,0.0))return exp_complex(vec2(0.0,0.0),-21474836);
     int expneeded=ilog2(dot(x,x))>>1;
-    return exp_complex(x*exp2(-float(expneeded)),expneeded);
+    return exp_complex(x*iexp2(-expneeded),expneeded);
 }
 
 
@@ -135,20 +119,18 @@ vec4 palette(int iters){
     return vec4(fullbr,1.0);
 }
 exp_complex getRef(int iters){
-    vec4 curValue=texelFetch(reference,ivec2(iters,0),0);
+    vec4 curValue=texelFetch(reference,ivec2(iters&16383,iters>>14),0);
     return exp_complex(curValue.xy,int(curValue.z));
 }
 
 void main(){
-    //gl_FragColor=vec4(texture2D(reference,fractalPos).xyz,1.0);
-
     exp_complex curpos=fromfloats(vec2(0.0,0.0));
     int numIters=-1;
     bool isglitch=false;
     float curlderiv=0.0;
     exp_complex floatexpPosition=fromfloats(fractalPos);
     floatexpPosition.exponent+=numzooms;
-    for(int i=0;i<10000;i++){
+    for(int i=0;i<maxiters;i++){
         exp_complex curref=getRef(i);
         exp_complex unperturbed=add(curpos,curref);
         if(unperturbed.exponent>=1){
@@ -162,14 +144,12 @@ void main(){
 
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
         float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
-        if(paletteparam==2){
 
-            if(lrad_unpert<lrad_ref-7.0){
+        if(paletteparam==2&&lrad_unpert<lrad_ref-7.0){
                 //numIters+=23424;
                 //break;
                 isglitch=true;
                 break;
-            }
         }
 
         if(i>0){
@@ -182,6 +162,7 @@ void main(){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
             if(lrad_cur-curlderiv>-glitchSensitivity){
                 isglitch=true;
+                i=maxiters;
                 break;
             }
         }
@@ -197,6 +178,7 @@ void main(){
         outputColour=(1.0-mix)*outputColour+mix*vec4(1.0,0.0,0.0,1.0);
     }
     */
+
 }
 
 `)
@@ -231,6 +213,7 @@ var ptex=glcont.createTexture()
 glcont.activeTexture(glcont.TEXTURE0)
 glcont.bindTexture(glcont.TEXTURE_2D,ptex)
 glcont.uniform1i(refIndex,0)
+var curtex;
 function genReference(cx,cy){
     var farr=new Float32Array(32768)
     var [zx,zy]=[0,0];
@@ -278,13 +261,16 @@ function genReference(cval){
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
 
 }
-var farr=new Float32Array(49152)
+var maxiters=16384
 function genReference(cval){
+    var farr=new Float32Array(Math.ceil(maxiters/16384)*16384*3)
     var zval=new BigComplex(0,0);
+
+    curtex=farr
     //var occurred=new Map()
     //var period=null
     var escaped=false
-    for(var i=0;i<16384;i++){
+    for(var i=0;i<maxiters;i++){
         var [zx,zy,zexp]=zval.toFloatexp()
         farr[i*3]=zx;
         farr[i*3+1]=zy;
@@ -305,7 +291,7 @@ function genReference(cval){
         */
     }
 
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,16384,1,0,glcont.RGB,glcont.FLOAT,farr)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
 
 }
 glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
@@ -378,13 +364,9 @@ class BigComplex{
         return Math.hypot(...this.toFloats())
     }
 }
-var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3)
+var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3),maxiters=16384
 var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
 genReference(new BigComplex(0,1))
-glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
-glcont.uniform1f(scaleIndex,curzoom)
-glcont.uniform1f(sensitivityIndex,glitchSensitivity/curzoom)
-glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 function render(){
     if(curzoom<=1e-250){
         console.log("limit")
@@ -395,9 +377,15 @@ function render(){
 
     var fcoords=curpos.sub(curref).toFloats()
     var clscale=Math.floor(Math.log2(curzoom))
+    console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+    console.log("scale ",curzoom*2**-clscale)
+    console.log("iters ",maxiters)
+    console.log("zooms ",clscale)
+    console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
     glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
 
     glcont.uniform1f(scaleIndex,curzoom*2**-clscale);
+    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"maxiters"),maxiters)
     glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"numzooms"),clscale)
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
@@ -405,8 +393,10 @@ function render(){
     */
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+    /*
     var x=new Uint8Array(4096)
     glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
+    */
     var anow=performance.now()
     console.log(anow-pnow,"ms")
 }
@@ -460,3 +450,4 @@ function checkGlitches(){
 //glcont.uniform2fv(offsetIndex,[curx,cury])
 //glcont.uniform1f(scaleIndex,curzoom)
 //glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+render()
