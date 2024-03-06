@@ -7,11 +7,23 @@ function createShader(context,type,program){
     context.shaderSource(shader,program)
     context.compileShader(shader)
     if(!context.getShaderParameter(shader,context.COMPILE_STATUS)){
-        console.log("shader error:\n"+context.getShaderInfoLog(shader))
+        console.log((type==context.FRAGMENT_SHADER?"fragment":"vertex")+" shader error:\n"+context.getShaderInfoLog(shader))
     }
     return shader
 }
-var vertShader=createShader(glcont,glcont.VERTEX_SHADER,`#version 300 es
+function createProgram(context,vertSource,fragSource){
+    var vertShader=createShader(context,context.VERTEX_SHADER,vertSource)
+    var fragShader=createShader(context,context.FRAGMENT_SHADER,fragSource)
+    var shaderProgram=context.createProgram()
+    context.attachShader(shaderProgram,vertShader)
+    context.attachShader(shaderProgram,fragShader)
+    context.linkProgram(shaderProgram)//finalise program
+    if(!context.getProgramParameter(shaderProgram,context.LINK_STATUS)){
+        console.log("program linking error:\n"+context.getShaderInfoLog(shader))
+    }
+    return shaderProgram
+}
+var shaderProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
 uniform vec2 posOffset;
@@ -21,14 +33,7 @@ void main(){
     gl_Position=vec4(position,0.0,1.0);
     fractalPos=position*scale+posOffset;
 }
-`)
-/*
-f_(n+1)=(f_n+r_n)^2+c-r_(n+1)
-      = f_n^2+2f_nr_n+r_n^2+c-r_n^2-r_c
-      = f_n^2+2f_nr_n+f_c
-f_0=r_0=0
-*/
-var fragShader=createShader(glcont,glcont.FRAGMENT_SHADER,`#version 300 es
+`,`#version 300 es
 precision highp float;
 precision highp int;
 in vec2 fractalPos;
@@ -187,20 +192,13 @@ void main(){
 }
 
 `)
-
-var shaderProgram=glcont.createProgram()
-glcont.attachShader(shaderProgram,vertShader)
-glcont.attachShader(shaderProgram,fragShader)
-glcont.linkProgram(shaderProgram);//finalise program
-
-var emptyVert=createShader(glcont,glcont.VERTEX_SHADER,`#version 300 es
+var emptyProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
 uniform float scale;
 void main(){
     gl_Position=vec4(position,0.0,1.0);
-}`)
-var emptyFrag=createShader(glcont,glcont.FRAGMENT_SHADER,`#version 300 es
+}`,`#version 300 es
 precision highp float;
 uniform highp sampler2D render;
 layout (location=0) out vec4 outputColour;
@@ -209,11 +207,6 @@ void main(){
     vec4 ctex=texelFetch(render,ivec2(gl_FragCoord.xy),0);
     nop=outputColour=ctex;
 }`)
-
-var emptyProgram=glcont.createProgram()
-glcont.attachShader(emptyProgram,emptyVert)
-glcont.attachShader(emptyProgram,emptyFrag)
-glcont.linkProgram(emptyProgram)
 
 function palette(iters){
 
