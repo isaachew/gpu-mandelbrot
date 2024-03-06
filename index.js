@@ -34,11 +34,13 @@ precision highp int;
 in vec2 fractalPos;
 uniform int numzooms;//additional number of zooms to do after float
 
-uniform int maxiters;
-uniform highp sampler2D reference;
+uniform int maxiters;//make sure small otherwise GPU will crash
+uniform highp sampler2D lastorbit;//information about previous iterations: x, y, exp
+uniform highp sampler2D reference;//reference orbit
 uniform float glitchSensitivity;
 uniform int paletteparam;
-out vec4 outputColour;
+layout(location=0) out vec4 outputColour;//colour
+layout(location=1) out vec4 orbitInfo;//output x, y, exp, number of iterations
 
 struct exp_complex{
     vec2 mantissa;//magnitude is always between 1 and 2
@@ -62,15 +64,6 @@ float iexp2(int x){
 exp_complex add(exp_complex a,exp_complex b){
     int maxexp=max(a.exponent,b.exponent);
     exp_complex result=exp_complex(iexp2(a.exponent-maxexp)*a.mantissa+iexp2(b.exponent-maxexp)*b.mantissa,maxexp);
-    /*
-    if(a.exponent<b.exponent){
-        result.mantissa=b.mantissa+a.mantissa*iexp2(expdiff);
-        result.exponent=b.exponent;
-    }else{
-        result.mantissa=a.mantissa+b.mantissa*iexp2(-expdiff);
-        result.exponent=a.exponent;
-    }
-    */
     int expneeded=ilog2(dot(result.mantissa,result.mantissa))>>1;
     result.mantissa*=iexp2(-expneeded);
     result.exponent=maxexp+expneeded;
@@ -124,17 +117,25 @@ exp_complex getRef(int iters){
 }
 
 void main(){
-    exp_complex curpos=fromfloats(vec2(0.0,0.0));
-    int numIters=-1;
+    vec4 posData=texelFetch(lastorbit,ivec2(gl_FragCoord.xy),0);
+    if(posData.xy==vec2(0.0,0.0))posData.z=-21474836.0;
+    exp_complex curpos=exp_complex(posData.xy,int(posData.z));
+    int olditers=floatBitsToInt(posData.w);
+    if(olditers<0){//stopped already
+        outputColour=palette(olditers)+0.5;
+        orbitInfo=posData;//don't do anything
+        return;
+    }
+    int numiters=-1;
     bool isglitch=false;
     float curlderiv=0.0;
     exp_complex floatexpPosition=fromfloats(fractalPos);
     floatexpPosition.exponent+=numzooms;
     for(int i=0;i<maxiters;i++){
-        exp_complex curref=getRef(i);
+        exp_complex curref=getRef(i+olditers);
         exp_complex unperturbed=add(curpos,curref);
         if(unperturbed.exponent>=1){
-            numIters=i;
+            numiters=i;
             break;
         }
         if(curref.exponent>=1){
@@ -145,8 +146,8 @@ void main(){
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
         float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
 
-        if(paletteparam==2&&lrad_unpert<lrad_ref-7.0){
-                //numIters+=23424;
+        if(lrad_unpert<lrad_ref-7.0){
+                //numiters+=23424;
                 //break;
                 isglitch=true;
                 break;
@@ -158,39 +159,67 @@ void main(){
 
         exp_complex refoffset=mulpow2(1,mul(curref,curpos));
         curpos=add(add(mul(curpos,curpos),refoffset),floatexpPosition);
+        /*
         if(paletteparam==0){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
             if(lrad_cur-curlderiv>-glitchSensitivity){
                 isglitch=true;
-                i=maxiters;
                 break;
             }
         }
+        */
     }
-    if(isglitch)numIters=-2;
-    //gl_FragColor=vec4(mod(float(numIters)*0.434,1.0),0.0,0.0,1.0);
-    //gl_FragColor=vec4(mod(float(numIters)/16777216.0,1.0),mod(float(numIters)/65536.0,1.0),mod(float(numIters)*43.6231/256.0,1.0),1.0);
-    outputColour=palette(numIters);
+    if(isglitch)numiters=-2;
+    if(numiters==-1){//max iterations reached
+        outputColour=palette(numiters);
+        numiters=maxiters;
+        numiters+=olditers;
+    }else{
+        if(numiters>=0)numiters+=olditers;
+        outputColour=palette(numiters);
+    }
+    orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
     /*
-    outputColour.r=0.0;
-    if(paletteparam==1){
-        float mix=clamp(0.5+(log(curerr)+log(glitchSensitivity))/10.0,float(numIters)/10.0,1.0);
-        outputColour=(1.0-mix)*outputColour+mix*vec4(1.0,0.0,0.0,1.0);
+    if(numiters==-1){
+        outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
     }
     */
-
 }
 
 `)
+
+var shaderProgram=glcont.createProgram()
+glcont.attachShader(shaderProgram,vertShader)
+glcont.attachShader(shaderProgram,fragShader)
+glcont.linkProgram(shaderProgram);//finalise program
+
+var emptyVert=createShader(glcont,glcont.VERTEX_SHADER,`#version 300 es
+precision highp float;
+in vec2 position;//-1 to 1
+uniform float scale;
+void main(){
+    gl_Position=vec4(position,0.0,1.0);
+}`)
+var emptyFrag=createShader(glcont,glcont.FRAGMENT_SHADER,`#version 300 es
+precision highp float;
+uniform highp sampler2D render;
+layout (location=0) out vec4 outputColour;
+layout (location=1) out vec4 nop;
+void main(){
+    vec4 ctex=texelFetch(render,ivec2(gl_FragCoord.xy),0);
+    nop=outputColour=ctex;
+}`)
+
+var emptyProgram=glcont.createProgram()
+glcont.attachShader(emptyProgram,emptyVert)
+glcont.attachShader(emptyProgram,emptyFrag)
+glcont.linkProgram(emptyProgram)
+
 function palette(iters){
 
 }
 console.time("hi")
 console.log(performance.now())
-var shaderProgram=glcont.createProgram()
-glcont.attachShader(shaderProgram,vertShader)
-glcont.attachShader(shaderProgram,fragShader)
-glcont.linkProgram(shaderProgram);//finalise program
 
 var positionIndex=glcont.getAttribLocation(shaderProgram,"position")
 var offsetIndex=glcont.getUniformLocation(shaderProgram,"posOffset")
@@ -257,7 +286,6 @@ function genReference(cval){
         occurred.set(""+[zx,zy],i)
         */
     }
-
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
 
 }
@@ -291,19 +319,54 @@ function genReference(cval){
         */
     }
 
+    glcont.activeTexture(glcont.TEXTURE0)
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
 
 }
-glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
-glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MAG_FILTER,glcont.NEAREST)
-glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
-glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_T,glcont.CLAMP_TO_EDGE)
+//enable texture
+function enableTexture(){//enables NPOT textures to work
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MAG_FILTER,glcont.NEAREST)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_T,glcont.CLAMP_TO_EDGE)
+}
+enableTexture()
+
+//From last orbit
+/*
+Texture unit 0: reference
+Texture unit 1: orbit
+Texture unit 2: orbit
+Texture unit 3: to render into
+
+*/
+var floatExt=glcont.getExtension("EXT_color_buffer_float")
+var curFramebuffer=glcont.createFramebuffer()
+var renderTex=glcont.createTexture()
+glcont.activeTexture(glcont.TEXTURE3)
+glcont.bindTexture(glcont.TEXTURE_2D,renderTex)
+enableTexture()
+
+glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+glcont.bindFramebuffer(glcont.DRAW_FRAMEBUFFER,curFramebuffer)
+var orbitTexture=glcont.createTexture()
+var newOrbitTexture=glcont.createTexture()
+glcont.activeTexture(glcont.TEXTURE1)
+glcont.bindTexture(glcont.TEXTURE_2D,orbitTexture)
+glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+enableTexture()
+
+glcont.activeTexture(glcont.TEXTURE2)
+glcont.bindTexture(glcont.TEXTURE_2D,newOrbitTexture)
+glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+enableTexture()
+
+glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT0,glcont.TEXTURE_2D,renderTex,0)
+glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,newOrbitTexture,0)
 
 
 
-glcont.uniform2fv(offsetIndex,[0,0])
-glcont.uniform1f(scaleIndex,2)
-glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+
 console.timeEnd("hi")
 var fixedFactor=736n
 function getDecimalValue(num,digits=Number(fixedFactor)+1){
@@ -367,6 +430,30 @@ class BigComplex{
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3),maxiters=16384
 var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
 genReference(new BigComplex(0,1))
+var swapTextures=false
+function renderStep(){
+    glcont.useProgram(shaderProgram)
+    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"lastorbit"),swapTextures?2:1)//last orbit in texture unit 1
+    glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
+    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,swapTextures?orbitTexture:newOrbitTexture,0)//render to newOrbitTexture
+    glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
+    glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+
+
+    glcont.bindFramebuffer(glcont.FRAMEBUFFER,null)
+    glcont.drawBuffers([glcont.BACK])
+    glcont.useProgram(emptyProgram)//renders from an existing texture
+    glcont.uniform1i(glcont.getUniformLocation(emptyProgram,"render"),3)
+    glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+
+    glcont.useProgram(shaderProgram)
+
+    //force gl.finish
+    var x=new Uint8Array(4096)
+    glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
+
+    swapTextures=!swapTextures
+}
 function render(){
     if(curzoom<=1e-250){
         console.log("limit")
@@ -382,24 +469,30 @@ function render(){
     console.log("iters ",maxiters)
     console.log("zooms ",clscale)
     console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
+    glcont.useProgram(shaderProgram)
     glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
 
-    glcont.uniform1f(scaleIndex,curzoom*2**-clscale);
+    glcont.uniform1f(scaleIndex,curzoom*2**-clscale)
     glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"maxiters"),maxiters)
     glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"numzooms"),clscale)
+    glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
     */
-    glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
+    //reset texture
+    glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
+    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,orbitTexture,0)
+    glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
+    glcont.useProgram(emptyProgram)
+    glcont.uniform1i(glcont.getUniformLocation(emptyProgram,"render"),5)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
-    /*
-    var x=new Uint8Array(4096)
-    glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
-    */
+    swapTextures=false
+    renderStep()
     var anow=performance.now()
     console.log(anow-pnow,"ms")
 }
+
 document.getElementById("webgl-canvas").addEventListener("mousedown",e=>{
     var crect=e.target.getBoundingClientRect()
     var xoffset=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
