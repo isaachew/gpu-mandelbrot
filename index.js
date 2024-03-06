@@ -23,7 +23,7 @@ function createProgram(context,vertSource,fragSource){
     }
     return shaderProgram
 }
-var shaderProgram=createProgram(glcont,`#version 300 es
+var mandelProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
 uniform vec2 posOffset;
@@ -164,7 +164,7 @@ void main(){
 
         exp_complex refoffset=mulpow2(1,mul(curref,curpos));
         curpos=add(add(mul(curpos,curpos),refoffset),floatexpPosition);
-        /*
+
         if(paletteparam==0){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
             if(lrad_cur-curlderiv>-glitchSensitivity){
@@ -172,7 +172,6 @@ void main(){
                 break;
             }
         }
-        */
     }
     if(isglitch)numiters=-2;
     if(numiters==-1){//max iterations reached
@@ -192,7 +191,7 @@ void main(){
 }
 
 `)
-var emptyProgram=createProgram(glcont,`#version 300 es
+var texRenderProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
 uniform float scale;
@@ -214,46 +213,38 @@ function palette(iters){
 console.time("hi")
 console.log(performance.now())
 
-var positionIndex=glcont.getAttribLocation(shaderProgram,"position")
-var offsetIndex=glcont.getUniformLocation(shaderProgram,"posOffset")
-var scaleIndex=glcont.getUniformLocation(shaderProgram,"scale")
-var sensitivityIndex=glcont.getUniformLocation(shaderProgram,"glitchSensitivity")
-var refIndex=glcont.getUniformLocation(shaderProgram,"reference")
-
-
+//Draw a square covering the whole screen
+var positionIndex=glcont.getAttribLocation(mandelProgram,"position")
 var positionBuffer=glcont.createBuffer()
 glcont.bindBuffer(glcont.ARRAY_BUFFER,positionBuffer)
 glcont.bufferData(glcont.ARRAY_BUFFER,new Float32Array([-1,-1,-1,1,1,1,1,-1]),glcont.STATIC_DRAW)
 glcont.enableVertexAttribArray(positionIndex)//enable "position" attribute to be bound to a buffer
 glcont.vertexAttribPointer(positionIndex,2,glcont.FLOAT,false,0,0)//how the data is read from buffer
+var offsetIndex=glcont.getUniformLocation(mandelProgram,"posOffset")
+var scaleIndex=glcont.getUniformLocation(mandelProgram,"scale")
+var sensitivityIndex=glcont.getUniformLocation(mandelProgram,"glitchSensitivity")
+var refIndex=glcont.getUniformLocation(mandelProgram,"reference")
 
 
-glcont.useProgram(shaderProgram)
+glcont.useProgram(mandelProgram)
 
+//enable texture
+function enableTexture(){//enables NPOT textures to work
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MAG_FILTER,glcont.NEAREST)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
+    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_T,glcont.CLAMP_TO_EDGE)
+}
+
+//texture for reference information
 var ptex=glcont.createTexture()
-
 glcont.activeTexture(glcont.TEXTURE0)
 glcont.bindTexture(glcont.TEXTURE_2D,ptex)
+enableTexture()
+//reference is in texture unit 0
 glcont.uniform1i(refIndex,0)
-var curtex;
-function genReference(cx,cy){
-    var farr=new Float32Array(32768)
-    var [zx,zy]=[0,0];
-    var occurred=new Map()
-    var period=null
-    for(var i=0;i<16384;i++){
-        farr[i*2]=zx;
-        farr[i*2+1]=zy;
-        [zx,zy]=[zx*zx-zy*zy+cx,2*zx*zy+cy];
-        if(occurred.has(""+[zx,zy])&&period==null){
-            console.log("found",occurred.get(""+[zx,zy]),i)
-            period=occurred.get(""+[zx,zy])-i
-        }
-        occurred.set(""+[zx,zy],i)
-    }
 
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
-}
+var curtex;
 function genReference(cval){
     var farr=new Float32Array(32768)
     var zval=new BigComplex(0,0);
@@ -283,7 +274,7 @@ function genReference(cval){
 
 }
 var maxiters=16384
-function genReference(cval){
+function genReference(cval){//write floatexp
     var farr=new Float32Array(Math.ceil(maxiters/16384)*16384*3)
     var zval=new BigComplex(0,0);
 
@@ -316,14 +307,7 @@ function genReference(cval){
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
 
 }
-//enable texture
-function enableTexture(){//enables NPOT textures to work
-    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MIN_FILTER,glcont.NEAREST)
-    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_MAG_FILTER,glcont.NEAREST)
-    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
-    glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_T,glcont.CLAMP_TO_EDGE)
-}
-enableTexture()
+
 
 //From last orbit
 /*
@@ -340,18 +324,18 @@ glcont.activeTexture(glcont.TEXTURE3)
 glcont.bindTexture(glcont.TEXTURE_2D,renderTex)
 enableTexture()
 
-glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
 glcont.bindFramebuffer(glcont.DRAW_FRAMEBUFFER,curFramebuffer)
 var orbitTexture=glcont.createTexture()
 var newOrbitTexture=glcont.createTexture()
 glcont.activeTexture(glcont.TEXTURE1)
 glcont.bindTexture(glcont.TEXTURE_2D,orbitTexture)
-glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
 enableTexture()
 
 glcont.activeTexture(glcont.TEXTURE2)
 glcont.bindTexture(glcont.TEXTURE_2D,newOrbitTexture)
-glcont.texStorage2D(glcont.TEXTURE_2D,1,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight)
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
 enableTexture()
 
 glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT0,glcont.TEXTURE_2D,renderTex,0)
@@ -422,11 +406,15 @@ class BigComplex{
 }
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3),maxiters=16384
 var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
+var maxstepiters=10000,curiters=0
 genReference(new BigComplex(0,1))
 var swapTextures=false
 function renderStep(){
-    glcont.useProgram(shaderProgram)
-    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"lastorbit"),swapTextures?2:1)//last orbit in texture unit 1
+    var renderediters=Math.min(maxstepiters,maxiters-curiters)
+    if(renderediters==0)return
+    glcont.useProgram(mandelProgram)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?2:1)//last orbit in texture unit 1
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
     glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,swapTextures?orbitTexture:newOrbitTexture,0)//render to newOrbitTexture
     glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
@@ -435,24 +423,25 @@ function renderStep(){
 
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,null)
     glcont.drawBuffers([glcont.BACK])
-    glcont.useProgram(emptyProgram)//renders from an existing texture
-    glcont.uniform1i(glcont.getUniformLocation(emptyProgram,"render"),3)
+    glcont.useProgram(texRenderProgram)//renders from an existing texture
+    glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),3)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 
-    glcont.useProgram(shaderProgram)
+    glcont.useProgram(mandelProgram)
 
     //force gl.finish
     var x=new Uint8Array(4096)
     glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
 
     swapTextures=!swapTextures
+    curiters+=renderediters
 }
 function render(){
     if(curzoom<=1e-250){
         console.log("limit")
         curzoom=1e-250
     }
-
+    curiters=0
     var pnow=performance.now()
 
     var fcoords=curpos.sub(curref).toFloats()
@@ -462,12 +451,12 @@ function render(){
     console.log("iters ",maxiters)
     console.log("zooms ",clscale)
     console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
-    glcont.useProgram(shaderProgram)
+    glcont.useProgram(mandelProgram)
     glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
 
     glcont.uniform1f(scaleIndex,curzoom*2**-clscale)
-    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"maxiters"),maxiters)
-    glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"numzooms"),clscale)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
@@ -477,13 +466,14 @@ function render(){
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
     glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,orbitTexture,0)
     glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
-    glcont.useProgram(emptyProgram)
-    glcont.uniform1i(glcont.getUniformLocation(emptyProgram,"render"),5)
+    glcont.useProgram(texRenderProgram)
+    glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),5)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
     swapTextures=false
     renderStep()
     var anow=performance.now()
     console.log(anow-pnow,"ms")
+
 }
 
 document.getElementById("webgl-canvas").addEventListener("mousedown",e=>{
@@ -515,12 +505,12 @@ document.addEventListener("keydown",e=>{
     if(e.key=="r"){
         curref=curpos.add(new BigComplex(curox,curoy));
         genReference(curref)
-        glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"paletteparam"),0)
+        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),0)
         curval=0
     }
     if(e.key=="e"){
         curval=(curval+1)%4
-        glcont.uniform1i(glcont.getUniformLocation(shaderProgram,"paletteparam"),curval/**curzoom*/)
+        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
     }
     render()
 })
