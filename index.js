@@ -40,12 +40,14 @@ in vec2 fractalPos;
 uniform int numzooms;//additional number of zooms to do after float
 
 uniform int maxiters;//make sure small otherwise GPU will crash
-uniform highp sampler2D lastorbit;//information about previous iterations: x, y, exp
+uniform highp sampler2D lastorbit;//information about previous iterations: x, y, exp, number of iterations
+uniform highp sampler2D lastorbit2;//glitch detection
 uniform highp sampler2D reference;//reference orbit
 uniform float glitchSensitivity;
 uniform int paletteparam;
 layout(location=0) out vec4 outputColour;//colour
 layout(location=1) out vec4 orbitInfo;//output x, y, exp, number of iterations
+layout(location=2) out vec4 orbitInfo2;//output x, y, exp, number of iterations
 
 struct exp_complex{
     vec2 mantissa;//magnitude is always between 1 and 2
@@ -123,17 +125,20 @@ exp_complex getRef(int iters){
 
 void main(){
     vec4 posData=texelFetch(lastorbit,ivec2(gl_FragCoord.xy),0);
+    vec4 posData2=texelFetch(lastorbit2,ivec2(gl_FragCoord.xy),0);
     if(posData.xy==vec2(0.0,0.0))posData.z=-21474836.0;
     exp_complex curpos=exp_complex(posData.xy,int(posData.z));
     int olditers=floatBitsToInt(posData.w);
     if(olditers<0){//stopped already
-        outputColour=palette(olditers)+0.5;
+        outputColour=palette(olditers);
         orbitInfo=posData;//don't do anything
+        orbitInfo2=posData2;
         return;
     }
+
     int numiters=-1;
     bool isglitch=false;
-    float curlderiv=0.0;
+    float curlderiv=posData2.x;
     exp_complex floatexpPosition=fromfloats(fractalPos);
     floatexpPosition.exponent+=numzooms;
     for(int i=0;i<maxiters;i++){
@@ -183,6 +188,7 @@ void main(){
         outputColour=palette(numiters);
     }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
+    orbitInfo2=vec4(curlderiv,0.0,0.0,0.0);//what to put here?
     /*
     if(numiters==-1){
         outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
@@ -235,6 +241,7 @@ function enableTexture(){//enables NPOT textures to work
     glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_S,glcont.CLAMP_TO_EDGE)
     glcont.texParameteri(glcont.TEXTURE_2D,glcont.TEXTURE_WRAP_T,glcont.CLAMP_TO_EDGE)
 }
+
 
 //texture for reference information
 var ptex=glcont.createTexture()
@@ -312,34 +319,47 @@ function genReference(cval){//write floatexp
 //From last orbit
 /*
 Texture unit 0: reference
-Texture unit 1: orbit
-Texture unit 2: orbit
-Texture unit 3: to render into
+Texture unit 1: to render into
+Texture unit 2: orbit1 read
+Texture unit 3: orbit2 read
+Texture unit 4: orbit1 write
+Texture unit 5: orbit write
 
 */
 var floatExt=glcont.getExtension("EXT_color_buffer_float")
 var curFramebuffer=glcont.createFramebuffer()
 var renderTex=glcont.createTexture()
-glcont.activeTexture(glcont.TEXTURE3)
-glcont.bindTexture(glcont.TEXTURE_2D,renderTex)
-enableTexture()
-
-glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
-glcont.bindFramebuffer(glcont.DRAW_FRAMEBUFFER,curFramebuffer)
-var orbitTexture=glcont.createTexture()
-var newOrbitTexture=glcont.createTexture()
 glcont.activeTexture(glcont.TEXTURE1)
-glcont.bindTexture(glcont.TEXTURE_2D,orbitTexture)
+glcont.bindTexture(glcont.TEXTURE_2D,renderTex)
 glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
 enableTexture()
 
+glcont.bindFramebuffer(glcont.DRAW_FRAMEBUFFER,curFramebuffer)
+var orbitTextures=[glcont.createTexture(),glcont.createTexture()]
+var newOrbitTextures=[glcont.createTexture(),glcont.createTexture()]
 glcont.activeTexture(glcont.TEXTURE2)
-glcont.bindTexture(glcont.TEXTURE_2D,newOrbitTexture)
+glcont.bindTexture(glcont.TEXTURE_2D,orbitTextures[0])
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
+enableTexture()
+
+glcont.activeTexture(glcont.TEXTURE3)
+glcont.bindTexture(glcont.TEXTURE_2D,orbitTextures[1])
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
+enableTexture()
+
+glcont.activeTexture(glcont.TEXTURE4)
+glcont.bindTexture(glcont.TEXTURE_2D,newOrbitTextures[0])
+glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
+enableTexture()
+
+glcont.activeTexture(glcont.TEXTURE5)
+glcont.bindTexture(glcont.TEXTURE_2D,newOrbitTextures[1])
 glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,null)
 enableTexture()
 
 glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT0,glcont.TEXTURE_2D,renderTex,0)
-glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,newOrbitTexture,0)
+glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,newOrbitTextures[0],0)
+glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT2,glcont.TEXTURE_2D,newOrbitTextures[1],0)
 
 
 
@@ -347,7 +367,7 @@ glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.T
 console.timeEnd("hi")
 var fixedFactor=736n
 function getDecimalValue(num,digits=Number(fixedFactor)+1){
-    st=""
+    var st=""
     if(num<0){
         num=-num
         st+="-"
@@ -361,6 +381,23 @@ function getDecimalValue(num,digits=Number(fixedFactor)+1){
         num*=10n
     }
     return st
+}
+function fromDecimalValue(val){
+    var num=0n
+    var isNegative=false
+    if(val[0]=="-"){
+        isNegative=true
+        val=val.slice(1)
+    }
+    var pointIndex=val.indexOf(".")
+    for(var i=val.length-1;i>pointIndex;i--){
+        var curdigit=+(val[i])
+        num+=(1n<<fixedFactor)*BigInt(curdigit)
+        num/=10n
+    }
+    num+=(1n<<fixedFactor)*BigInt(val.slice(0,pointIndex))
+    if(isNegative)num=-num
+    return num
 }
 class BigComplex{
     real;imag
@@ -406,7 +443,7 @@ class BigComplex{
 }
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3),maxiters=16384
 var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
-var maxstepiters=10000,curiters=0
+var maxstepiters=100,curiters=0
 genReference(new BigComplex(0,1))
 var swapTextures=false
 function renderStep(){
@@ -414,17 +451,19 @@ function renderStep(){
     if(renderediters==0)return
     glcont.useProgram(mandelProgram)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?2:1)//last orbit in texture unit 1
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?4:2)//last orbit in texture unit 2 or 4
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit2"),swapTextures?5:3)//last orbit in texture unit 3 or 5
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
-    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,swapTextures?orbitTexture:newOrbitTexture,0)//render to newOrbitTexture
-    glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
+    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,swapTextures?orbitTextures[0]:newOrbitTextures[0],0)//render to newOrbitTexture
+    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT2,glcont.TEXTURE_2D,swapTextures?orbitTextures[1]:newOrbitTextures[1],0)//render to newOrbitTexture
+    glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1,glcont.COLOR_ATTACHMENT2])
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 
 
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,null)
     glcont.drawBuffers([glcont.BACK])
     glcont.useProgram(texRenderProgram)//renders from an existing texture
-    glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),3)
+    glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),1)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
 
     glcont.useProgram(mandelProgram)
@@ -435,6 +474,7 @@ function renderStep(){
 
     swapTextures=!swapTextures
     curiters+=renderediters
+    setTimeout(renderStep)
 }
 function render(){
     if(curzoom<=1e-250){
@@ -462,13 +502,12 @@ function render(){
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
     */
-    //reset texture
-    glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
-    glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT1,glcont.TEXTURE_2D,orbitTexture,0)
-    glcont.drawBuffers([glcont.COLOR_ATTACHMENT0,glcont.COLOR_ATTACHMENT1])
-    glcont.useProgram(texRenderProgram)
-    glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),5)
-    glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
+    //reset textures
+    var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)
+    glcont.activeTexture(glcont.TEXTURE2)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
+    glcont.activeTexture(glcont.TEXTURE3)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
     swapTextures=false
     renderStep()
     var anow=performance.now()
