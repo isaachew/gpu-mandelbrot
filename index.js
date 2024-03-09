@@ -19,7 +19,7 @@ function createProgram(context,vertSource,fragSource){
     context.attachShader(shaderProgram,fragShader)
     context.linkProgram(shaderProgram)//finalise program
     if(!context.getProgramParameter(shaderProgram,context.LINK_STATUS)){
-        console.log("program linking error:\n"+context.getShaderInfoLog(shader))
+        console.log("program linking error:\n"+context.getProgramInfoLog(shaderProgram))
     }
     return shaderProgram
 }
@@ -49,17 +49,12 @@ layout(location=0) out vec4 outputColour;//colour
 layout(location=1) out vec4 orbitInfo;//output x, y, exp, number of iterations
 layout(location=2) out vec4 orbitInfo2;//output x, y, exp, number of iterations
 
-struct exp_complex{
-    vec2 mantissa;//magnitude is always between 1 and 2
-    int exponent;
-};
-
 vec2 complexmul(vec2 a,vec2 b){
     return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);
 }
 
 //Functions for managing floats
-int ilog2(float x){
+int ilog2(float x){//floor(log(|x|)), clamped to [-127,128]
     int intRep=floatBitsToInt(x);
     return ((intRep>>23)&255)-127;
 }
@@ -67,7 +62,61 @@ float iexp2(int x){
     int floatRep=clamp(x+127,0,255)<<23;
     return intBitsToFloat(floatRep);
 }
+//Floatexp
+struct floatexp{
+    float mantissa;//magnitude is always between 1 and 2
+    int exponent;
+};
+
+floatexp add(floatexp a,floatexp b){
+    int maxexp=max(a.exponent,b.exponent);
+    floatexp result=floatexp(iexp2(a.exponent-maxexp)*a.mantissa+iexp2(b.exponent-maxexp)*b.mantissa,maxexp);
+    int expneeded=ilog2(result.mantissa);
+    result.mantissa*=iexp2(-expneeded);
+    result.exponent=maxexp+expneeded;
+    if(result.mantissa==0.0){//zero
+        result.exponent=-21474836;
+    }
+    return result;
+}
+floatexp neg(floatexp x){
+    return floatexp(-x.mantissa,x.exponent);
+}
+floatexp sub(floatexp a,floatexp b){
+    return add(a,neg(b));
+}
+floatexp mul(floatexp a,floatexp b){
+    floatexp result=floatexp(a.mantissa*b.mantissa,a.exponent+b.exponent);
+    if(abs(result.mantissa)>=2.0){
+        result.mantissa*=0.5;
+        result.exponent++;
+    }
+    if(result.mantissa==0.0){//zero
+        result.exponent=-21474836;
+    }
+    return result;
+}
+floatexp mulpow2(int a,floatexp b){//a is powers of 2
+    b.exponent+=a;
+    return b;
+}
+
+
+float fromfloatexp(floatexp x){
+    return x.mantissa*iexp2(x.exponent);
+}
+floatexp tofloatexp(float x){
+    if(x==0.0)return floatexp(0.0,-21474836);
+    int expneeded=ilog2(x);
+    return floatexp(x*iexp2(-expneeded),expneeded);
+}
+
 //Complex floatexp
+struct exp_complex{
+    vec2 mantissa;//magnitude is always between 1 and 2
+    int exponent;
+};
+
 exp_complex add(exp_complex a,exp_complex b){
     int maxexp=max(a.exponent,b.exponent);
     exp_complex result=exp_complex(iexp2(a.exponent-maxexp)*a.mantissa+iexp2(b.exponent-maxexp)*b.mantissa,maxexp);
@@ -101,10 +150,10 @@ exp_complex mulpow2(int a,exp_complex b){//a is powers of 2
     return b;
 }
 
-vec2 tofloats(exp_complex x){
+vec2 fromfloatexp(exp_complex x){
     return x.mantissa*iexp2(x.exponent);
 }
-exp_complex fromfloats(vec2 x){
+exp_complex tofloatexp(vec2 x){
     if(x==vec2(0.0,0.0))return exp_complex(vec2(0.0,0.0),-21474836);
     int expneeded=ilog2(dot(x,x))>>1;
     return exp_complex(x*iexp2(-expneeded),expneeded);
@@ -114,6 +163,7 @@ exp_complex fromfloats(vec2 x){
 vec4 palette(int iters){
     if(iters==-1)return vec4(0.0,0.0,0.0,1.0);
     if(iters==-2)return vec4(1.0,0.0,0.0,1.0);
+    iters=abs(iters);
     vec3 fullbr=vec3(0,cos(float(iters)*0.2)*-0.5+0.7,cos(float(iters)*0.2)*0.2+0.7);
     fullbr*=cos(float(iters)*0.0085)*0.25+0.75;
     return vec4(fullbr,1.0);
@@ -135,12 +185,14 @@ void main(){
         orbitInfo2=posData2;
         return;
     }
+    floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
 
     int numiters=-1;
     bool isglitch=false;
     float curlderiv=posData2.x;
-    exp_complex floatexpPosition=fromfloats(fractalPos);
+    exp_complex floatexpPosition=tofloatexp(fractalPos);
     floatexpPosition.exponent+=numzooms;
+    float lcrad=log2(length(floatexpPosition.mantissa))+float(floatexpPosition.exponent);
     for(int i=0;i<maxiters;i++){
         exp_complex curref=getRef(i+olditers);
         exp_complex unperturbed=add(curpos,curref);
@@ -150,9 +202,11 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
+            numiters=-2;
             break;
         }
 
+        float lrad_oldpos=log2(length(curpos.mantissa))+float(curpos.exponent);
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
         float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
 
@@ -160,25 +214,34 @@ void main(){
                 //numiters+=23424;
                 //break;
                 isglitch=true;
+                numiters=-2;
                 break;
         }
+        
 
-        if(i>0){
+        if(i>0||olditers>0){
             curlderiv+=1.0+lrad_unpert;
         }
 
-        exp_complex refoffset=mulpow2(1,mul(curref,curpos));
-        curpos=add(add(mul(curpos,curpos),refoffset),floatexpPosition);
+        //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
+        curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
 
         if(paletteparam==0){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
-            if(lrad_cur-curlderiv>-glitchSensitivity){
+            float maxld=lrad_cur;
+            float curlerr=maxld-curlderiv;
+            relerr=add(relerr,floatexp(1.0,int(curlerr)));
+            float lrelerr=log2(relerr.mantissa)+float(relerr.exponent);
+            //abs(precision*z) = error; sum the error up over iterations?
+            //total error>abs(pixelSize*z') then bailout
+            //precision is 2^-24
+            if(lrelerr>-glitchSensitivity){
                 isglitch=true;
+                numiters=-2;
                 break;
             }
         }
     }
-    if(isglitch)numiters=-2;
     if(numiters==-1){//max iterations reached
         outputColour=palette(numiters);
         numiters=maxiters;
@@ -188,7 +251,7 @@ void main(){
         outputColour=palette(numiters);
     }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
-    orbitInfo2=vec4(curlderiv,0.0,0.0,0.0);//what to put here?
+    orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),0.0);
     /*
     if(numiters==-1){
         outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
@@ -411,6 +474,9 @@ class BigComplex{
                 throw "too big"
             }
             this.real=re,this.imag=im
+        }else if(typeof re=="string"){
+            this.real=fromDecimalValue(re)
+            this.imag=fromDecimalValue(im)
         }else{
             this.real=BigInt(Math.round(re*2**Number(fixedFactor)))
             this.imag=BigInt(Math.round(im*2**Number(fixedFactor)))
@@ -441,7 +507,7 @@ class BigComplex{
         return Math.hypot(...this.toFloats())
     }
 }
-var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24/1024*3),maxiters=16384
+var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24)*512/3,maxiters=16384
 var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
 var maxstepiters=100,curiters=0
 genReference(new BigComplex(0,1))
@@ -474,6 +540,7 @@ function renderStep(){
 
     swapTextures=!swapTextures
     curiters+=renderediters
+    numRenderedIters.textContent=curiters
     setTimeout(renderStep)
 }
 function render(){
