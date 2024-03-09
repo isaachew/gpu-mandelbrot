@@ -159,7 +159,7 @@ exp_complex tofloatexp(vec2 x){
     return exp_complex(x*iexp2(-expneeded),expneeded);
 }
 
-
+/*
 vec4 palette(int iters){
     if(iters==-1)return vec4(0.0,0.0,0.0,1.0);
     if(iters==-2)return vec4(1.0,0.0,0.0,1.0);
@@ -167,6 +167,11 @@ vec4 palette(int iters){
     vec3 fullbr=vec3(0,cos(float(iters)*0.2)*-0.5+0.7,cos(float(iters)*0.2)*0.2+0.7);
     fullbr*=cos(float(iters)*0.0085)*0.25+0.75;
     return vec4(fullbr,1.0);
+}
+*/
+vec4 palette(int iters){
+    vec4 fullbr=vec4(float(iters&255)/256.0,float((iters>>8)&255)/256.0,float((iters>>16)&255)/256.0,1.0);
+    return fullbr;
 }
 exp_complex getRef(int iters){
     vec4 curValue=texelFetch(reference,ivec2(iters&16383,iters>>14),0);
@@ -217,7 +222,7 @@ void main(){
                 numiters=-2;
                 break;
         }
-        
+
 
         if(i>0||olditers>0){
             curlderiv+=1.0+lrad_unpert;
@@ -619,6 +624,11 @@ document.addEventListener("keydown",e=>{
         glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
     }
     render()
+})
+document.getElementById("gotoLocation").addEventListener("click",a=>{
+    var nxpos=document.getElementById("xPosition").value
+    var nypos=document.getElementById("yPosition").value
+    curpos=new BigComplex(nxpos,nypos)
 })
 function checkGlitches(){
 
