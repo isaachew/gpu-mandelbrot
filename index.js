@@ -1,5 +1,5 @@
-//var rcanv=document.getElementById("render-canvas")
-//var rcontext=rcanv.getContext("2d")
+var rcanv=document.getElementById("render-canvas")
+var rcontext=rcanv.getContext("2d")
 var glcanv=document.getElementById("webgl-canvas")
 var glcont=glcanv.getContext("webgl2",{preserveDrawingBuffer: true})
 function createShader(context,type,program){
@@ -159,20 +159,6 @@ exp_complex tofloatexp(vec2 x){
     return exp_complex(x*iexp2(-expneeded),expneeded);
 }
 
-/*
-vec4 palette(int iters){
-    if(iters==-1)return vec4(0.0,0.0,0.0,1.0);
-    if(iters==-2)return vec4(1.0,0.0,0.0,1.0);
-    iters=abs(iters);
-    vec3 fullbr=vec3(0,cos(float(iters)*0.2)*-0.5+0.7,cos(float(iters)*0.2)*0.2+0.7);
-    fullbr*=cos(float(iters)*0.0085)*0.25+0.75;
-    return vec4(fullbr,1.0);
-}
-*/
-vec4 palette(int iters){
-    vec4 fullbr=vec4(float(iters&255)/256.0,float((iters>>8)&255)/256.0,float((iters>>16)&255)/256.0,1.0);
-    return fullbr;
-}
 exp_complex getRef(int iters){
     vec4 curValue=texelFetch(reference,ivec2(iters&16383,iters>>14),0);
     return exp_complex(curValue.xy,int(curValue.z));
@@ -185,14 +171,14 @@ void main(){
     exp_complex curpos=exp_complex(posData.xy,int(posData.z));
     int olditers=floatBitsToInt(posData.w);
     if(olditers<0){//stopped already
-        outputColour=palette(olditers);
+        outputColour=vec4(intBitsToFloat(olditers),0.0,0.0,0.0);
         orbitInfo=posData;//don't do anything
         orbitInfo2=posData2;
         return;
     }
     floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
 
-    int numiters=-1;
+    int numiters=maxiters;
     bool isglitch=false;
     float curlderiv=posData2.x;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
@@ -207,7 +193,7 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-2;
+            numiters=-(i+olditers)-2;
             break;
         }
 
@@ -219,7 +205,7 @@ void main(){
                 //numiters+=23424;
                 //break;
                 isglitch=true;
-                numiters=-2;
+                numiters=-(i+olditers)-2;
                 break;
         }
 
@@ -242,19 +228,13 @@ void main(){
             //precision is 2^-24
             if(lrelerr>-glitchSensitivity){
                 isglitch=true;
-                numiters=-2;
+                numiters=-(i+olditers)-2;
                 break;
             }
         }
     }
-    if(numiters==-1){//max iterations reached
-        outputColour=palette(numiters);
-        numiters=maxiters;
-        numiters+=olditers;
-    }else{
-        if(numiters>=0)numiters+=olditers;
-        outputColour=palette(numiters);
-    }
+    if(numiters>=0)numiters+=olditers;
+    outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
     orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),0.0);
     /*
@@ -275,10 +255,10 @@ void main(){
 precision highp float;
 uniform highp sampler2D render;
 layout (location=0) out vec4 outputColour;
-layout (location=1) out vec4 nop;
 void main(){
     vec4 ctex=texelFetch(render,ivec2(gl_FragCoord.xy),0);
-    nop=outputColour=ctex;
+    int iters=floatBitsToInt(ctex.x);
+    outputColour=vec4(float(iters&255)/255.0,float((iters>>8)&255)/255.0,float((iters>>16)&255)/255.0,float((iters>>24)&255)/255.0);
 }`)
 
 function palette(iters){
@@ -433,7 +413,7 @@ glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT2,glcont.T
 
 
 console.timeEnd("hi")
-var fixedFactor=736n
+var fixedFactor=896n
 function getDecimalValue(num,digits=Number(fixedFactor)+1){
     var st=""
     if(num<0){
@@ -513,13 +493,20 @@ class BigComplex{
     }
 }
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24)*512/3,maxiters=16384
-var curref=new BigComplex(0n,1n<<fixedFactor)//e-6
+var curref=new BigComplex(0n,0n)//e-6
 var maxstepiters=100,curiters=0
-genReference(new BigComplex(0,1))
+genReference(new BigComplex(0,0))
 var swapTextures=false
+
+var readBuffer=new Uint8Array(4096)//where readpixels
+var glitchDetection=false
 function renderStep(){
     var renderediters=Math.min(maxstepiters,maxiters-curiters)
-    if(renderediters==0)return
+    if(renderediters==0){
+        if(glitchDetection){toCanvas()
+        findNewRef()}
+        return
+    }
     glcont.useProgram(mandelProgram)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?4:2)//last orbit in texture unit 2 or 4
@@ -536,19 +523,22 @@ function renderStep(){
     glcont.useProgram(texRenderProgram)//renders from an existing texture
     glcont.uniform1i(glcont.getUniformLocation(texRenderProgram,"render"),1)
     glcont.drawArrays(glcont.TRIANGLE_FAN,0,4)
-
     glcont.useProgram(mandelProgram)
 
     //force gl.finish
-    var x=new Uint8Array(4096)
-    glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,x)
+    glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,readBuffer)
 
     swapTextures=!swapTextures
     curiters+=renderediters
     numRenderedIters.textContent=curiters
     setTimeout(renderStep)
 }
+var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to reset to black
+var orbitArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to set orbit
+var orbitIntArray=new Int32Array(orbitArray.buffer)
+
 function render(){
+    numReferences++
     if(curzoom<=1e-250){
         console.log("limit")
         curzoom=1e-250
@@ -575,9 +565,8 @@ function render(){
     glcont.uniform1f(scaleIndex,curzoom)
     */
     //reset textures
-    var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)
     glcont.activeTexture(glcont.TEXTURE2)
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,orbitArray)
     glcont.activeTexture(glcont.TEXTURE3)
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
     swapTextures=false
@@ -630,8 +619,80 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
     var nypos=document.getElementById("yPosition").value
     curpos=new BigComplex(nxpos,nypos)
 })
-function checkGlitches(){
+var curBitmap=rcontext.createImageData(rcanv.width,rcanv.height)
+var curData=new Int32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight)
+var curDataByte=new Uint8Array(curData.buffer)
+var numReferences=0
+function resetRender(){
+    for(var i=0;i<curData.length;i++){
+        curData[i]=-2
+    }
+    for(var i=0;i<glcont.drawingBufferHeight;i++){
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            orbitIntArray[(i*glcont.drawingBufferWidth+j)*4+3]=0
+        }
+    }
+}
 
+function toCanvas(){
+    var pixels=new Uint8Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)
+    glcont.readPixels(0,0,glcont.drawingBufferWidth,glcont.drawingBufferHeight,glcont.RGBA,glcont.UNSIGNED_BYTE,pixels)
+    var intPixels=new Int32Array(pixels.buffer)
+    for(var i=0;i<glcont.drawingBufferHeight;i++){
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            var curPixValue=intPixels[(glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j]
+            if(curPixValue<=-2){
+                if(curData[i*glcont.drawingBufferWidth+j]<=-2)curData[i*glcont.drawingBufferWidth+j]=curPixValue
+                continue;
+            }
+            if(curPixValue==-1)continue
+            curData[i*glcont.drawingBufferWidth+j]=curPixValue
+        }
+    }
+    var curIntBitmap=new Int32Array(curBitmap.data.buffer)
+    for(var i=0;i<glcont.drawingBufferHeight;i++){
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            curIntBitmap[i*glcont.drawingBufferWidth+j]=curData[i*glcont.drawingBufferWidth+j]|-16777216
+        }
+    }
+    rcontext.putImageData(curBitmap,0,0)
+}
+function findNewRef(){
+    var glitchLoc=null;
+    var maxGlitchIters=-1
+    for(var i=0;i<glcont.drawingBufferHeight;i++){
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            var cdata=curData[glcont.drawingBufferWidth*i+j]
+            if(curData[glcont.drawingBufferWidth*i+j-1]>-2)continue
+            if(curData[glcont.drawingBufferWidth*i+j-glcont.drawingBufferWidth]>-2)continue
+            if(curData[glcont.drawingBufferWidth*i+j+1]>-2)continue
+            if(curData[glcont.drawingBufferWidth*i+j+glcont.drawingBufferWidth]>-2)continue
+            if(cdata<=-2){
+                if(-2-cdata>maxGlitchIters){
+                    glitchLoc=[j,i]//on canvas
+                    maxGlitchIters=-2-cdata
+                }
+            }
+        }
+    }
+    console.log(maxGlitchIters)
+    if(glitchLoc==null){
+        console.log("no glitch")
+        return
+    }
+    var glitchOffX=((glitchLoc[0]+0.5)/glcont.drawingBufferWidth*2-1)*curzoom
+    var glitchOffY=-((glitchLoc[1]+0.5)/glcont.drawingBufferHeight*2-1)*curzoom
+    console.log(glitchOffX,glitchOffY)
+    var glitchPos=curpos.add(new BigComplex(glitchOffX,glitchOffY))
+    curref=glitchPos
+    genReference(curref)
+    var orbitIntArray=new Int32Array(orbitArray.buffer)
+    for(var i=0;i<glcont.drawingBufferHeight;i++){
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            if(curData[i*glcont.drawingBufferWidth+j]>=0)orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
+        }
+    }
+    render()
 }
 //-0.7497201102120534 0.028404976981026727 0.0000152587890625
 //-1.98547607421875 0 0.00006103515625
