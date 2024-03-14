@@ -178,7 +178,7 @@ void main(){
     }
     floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
 
-    int numiters=maxiters;
+    int numiters=-1;
     bool isglitch=false;
     float curlderiv=posData2.x;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
@@ -193,7 +193,7 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-(i+olditers)-2;
+            numiters=-2;//glitch with least priority
             break;
         }
 
@@ -205,7 +205,7 @@ void main(){
                 //numiters+=23424;
                 //break;
                 isglitch=true;
-                numiters=-(i+olditers)-2;
+                numiters=-2+min(0,unperturbed.exponent);
                 break;
         }
 
@@ -217,7 +217,7 @@ void main(){
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
         curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
 
-        if(paletteparam==0){
+        if(paletteparam==1){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
             float maxld=lrad_cur;
             float curlerr=maxld-curlderiv;
@@ -235,6 +235,7 @@ void main(){
     }
     if(numiters>=0)numiters+=olditers;
     outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
+    if(numiters==-1)numiters=maxiters+olditers;
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
     orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),0.0);
     /*
@@ -500,10 +501,12 @@ var swapTextures=false
 
 var readBuffer=new Uint8Array(4096)//where readpixels
 var glitchDetection=false
+var lastCanvasWrite=0
 function renderStep(){
     var renderediters=Math.min(maxstepiters,maxiters-curiters)
     if(renderediters==0){
-        if(glitchDetection){toCanvas()
+        toCanvas()
+        if(glitchDetection){
         findNewRef()}
         return
     }
@@ -527,7 +530,11 @@ function renderStep(){
 
     //force gl.finish
     glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,readBuffer)
-
+    var curTime=+new Date
+    if(curTime-lastCanvasWrite>2000){
+        toCanvas()
+        lastCanvasWrite=+new Date
+    }
     swapTextures=!swapTextures
     curiters+=renderediters
     numRenderedIters.textContent=curiters
@@ -537,7 +544,7 @@ var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHe
 var orbitArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to set orbit
 var orbitIntArray=new Int32Array(orbitArray.buffer)
 
-function render(){
+function renderWebGL(){
     numReferences++
     if(curzoom<=1e-250){
         console.log("limit")
@@ -560,6 +567,7 @@ function render(){
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
+    lastCanvasWrite=0
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
@@ -576,7 +584,11 @@ function render(){
 
 }
 
-document.getElementById("webgl-canvas").addEventListener("mousedown",e=>{
+function render(){
+    resetRender()
+    renderWebGL()
+}
+document.getElementById("render-canvas").addEventListener("mousedown",e=>{
     var crect=e.target.getBoundingClientRect()
     var xoffset=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
     var yoffset=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
@@ -586,11 +598,11 @@ document.getElementById("webgl-canvas").addEventListener("mousedown",e=>{
     render()
     e.preventDefault()
 })
-document.getElementById("webgl-canvas").addEventListener("contextmenu",e=>{
+document.getElementById("render-canvas").addEventListener("contextmenu",e=>{
     e.preventDefault()
 })
 var curox,curoy;
-document.getElementById("webgl-canvas").addEventListener("mousemove",e=>{
+document.getElementById("render-canvas").addEventListener("mousemove",e=>{
     var crect=e.target.getBoundingClientRect()
     curox=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
     curoy=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
@@ -601,12 +613,14 @@ document.addEventListener("keydown",e=>{
     if(e.key=="p"){
         curref=curpos;
         genReference(curpos)
+        renderWebGL()
+        return
     }
     if(e.key=="r"){
         curref=curpos.add(new BigComplex(curox,curoy));
         genReference(curref)
-        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),0)
-        curval=0
+        renderWebGL()
+        return
     }
     if(e.key=="e"){
         curval=(curval+1)%4
@@ -622,16 +636,30 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
 var curBitmap=rcontext.createImageData(rcanv.width,rcanv.height)
 var curData=new Int32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight)
 var curDataByte=new Uint8Array(curData.buffer)
+var pixelsAffected=0
 var numReferences=0
 function resetRender(){
     for(var i=0;i<curData.length;i++){
-        curData[i]=-2
+        curData[i]=-1
     }
     for(var i=0;i<glcont.drawingBufferHeight;i++){
         for(var j=0;j<glcont.drawingBufferWidth;j++){
             orbitIntArray[(i*glcont.drawingBufferWidth+j)*4+3]=0
         }
     }
+}
+var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.12235491071428571,"colour":[47,93,167]},{"position":0.3587109375,"colour":[237,237,237]},{"position":0.6516127232142858,"colour":[16,174,213]},{"position":0.8173604910714286,"colour":[48,103,145]},{"position":1,"colour":[138,220,255]}],"length":600}
+function paletteFunc(x){
+    if(x<0)return -16777216
+    if(!isFinite(x))return -16777216
+    x+=palette.time||0
+    let progress=x%palette.length/palette.length
+    let palind=palette.stops.findIndex(a=>a.position>progress)
+    let colprog=(progress-palette.stops[palind-1].position)/(palette.stops[palind].position-palette.stops[palind-1].position)
+    let cr=palette.stops[palind].colour[0]*colprog+palette.stops[palind-1].colour[0]*(1-colprog)
+    let cg=palette.stops[palind].colour[1]*colprog+palette.stops[palind-1].colour[1]*(1-colprog)
+    let cb=palette.stops[palind].colour[2]*colprog+palette.stops[palind-1].colour[2]*(1-colprog)
+    return (cb<<16)|(cg<<8)|cr|-16777216
 }
 
 function toCanvas(){
@@ -641,21 +669,40 @@ function toCanvas(){
     for(var i=0;i<glcont.drawingBufferHeight;i++){
         for(var j=0;j<glcont.drawingBufferWidth;j++){
             var curPixValue=intPixels[(glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j]
-            if(curPixValue<=-2){
-                if(curData[i*glcont.drawingBufferWidth+j]<=-2)curData[i*glcont.drawingBufferWidth+j]=curPixValue
-                continue;
+            var existingValue=curData[i*glcont.drawingBufferWidth+j]
+            if(existingValue==-1){//always overwrite -1
+                curData[i*glcont.drawingBufferWidth+j]=curPixValue
+            }else{
+                if(curPixValue<=-2){//only overwrite existing glitches
+                    if(existingValue<=-2){
+                        curData[i*glcont.drawingBufferWidth+j]=Math.max(existingValue,curPixValue)
+                    }
+                    continue
+                }
+                if(curPixValue!=-1){//write if not -1 (fully computed)
+                    curData[i*glcont.drawingBufferWidth+j]=curPixValue
+                }
             }
-            if(curPixValue==-1)continue
-            curData[i*glcont.drawingBufferWidth+j]=curPixValue
         }
     }
     var curIntBitmap=new Int32Array(curBitmap.data.buffer)
     for(var i=0;i<glcont.drawingBufferHeight;i++){
         for(var j=0;j<glcont.drawingBufferWidth;j++){
-            curIntBitmap[i*glcont.drawingBufferWidth+j]=curData[i*glcont.drawingBufferWidth+j]|-16777216
+            curIntBitmap[i*glcont.drawingBufferWidth+j]=paletteFunc(curData[i*glcont.drawingBufferWidth+j])
         }
     }
     rcontext.putImageData(curBitmap,0,0)
+
+    for(var i=0;i<glcont.drawingBufferHeight;i++){//make renderer ignore already rendered points
+        for(var j=0;j<glcont.drawingBufferWidth;j++){
+            if(curData[i*glcont.drawingBufferWidth+j]>=0){
+                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
+            }
+            if(curData[i*glcont.drawingBufferWidth+j]==-1&&curiters==maxiters){//max iters is fully rendered; do not rerender -1s
+                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
+            }
+        }
+    }
 }
 function findNewRef(){
     var glitchLoc=null;
@@ -675,7 +722,7 @@ function findNewRef(){
             }
         }
     }
-    console.log(maxGlitchIters)
+    console.log("found with score ",maxGlitchIters)
     if(glitchLoc==null){
         console.log("no glitch")
         return
@@ -687,12 +734,7 @@ function findNewRef(){
     curref=glitchPos
     genReference(curref)
     var orbitIntArray=new Int32Array(orbitArray.buffer)
-    for(var i=0;i<glcont.drawingBufferHeight;i++){
-        for(var j=0;j<glcont.drawingBufferWidth;j++){
-            if(curData[i*glcont.drawingBufferWidth+j]>=0)orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
-        }
-    }
-    render()
+    renderWebGL()
 }
 //-0.7497201102120534 0.028404976981026727 0.0000152587890625
 //-1.98547607421875 0 0.00006103515625
