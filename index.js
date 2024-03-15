@@ -193,7 +193,7 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-2;//glitch with least priority
+            numiters=-2+min(0,unperturbed.exponent);
             break;
         }
 
@@ -495,7 +495,7 @@ class BigComplex{
 }
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24)*512/3,maxiters=16384
 var curref=new BigComplex(0n,0n)//e-6
-var maxstepiters=100,curiters=0
+var maxstepiters=10000,curstepiters=100,curiters=0
 genReference(new BigComplex(0,0))
 var swapTextures=false
 
@@ -503,13 +503,17 @@ var readBuffer=new Uint8Array(4096)//where readpixels
 var glitchDetection=false
 var lastCanvasWrite=0
 function renderStep(){
-    var renderediters=Math.min(maxstepiters,maxiters-curiters)
+    var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
         toCanvas()
+        var renderEnd=performance.now()
+        console.log(renderEnd-renderStart,"ms")
         if(glitchDetection){
-        findNewRef()}
+            findNewRef()
+        }
         return
     }
+    var drawStart=performance.now()
     glcont.useProgram(mandelProgram)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?4:2)//last orbit in texture unit 2 or 4
@@ -530,6 +534,17 @@ function renderStep(){
 
     //force gl.finish
     glcont.readPixels(0,0,32,32,glcont.RGBA,glcont.UNSIGNED_BYTE,readBuffer)
+    var drawEnd=performance.now()
+    var drawTime=drawEnd-drawStart
+    if(drawTime<50){
+        curstepiters*=2
+        curstepiters=Math.min(curstepiters,maxstepiters)
+    }
+    if(drawTime>100){
+        curstepiters/=2
+        curstepiters=Math.max(curstepiters,100)
+    }
+    console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
     var curTime=+new Date
     if(curTime-lastCanvasWrite>2000){
         toCanvas()
@@ -543,8 +558,9 @@ function renderStep(){
 var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to reset to black
 var orbitArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to set orbit
 var orbitIntArray=new Int32Array(orbitArray.buffer)
-
+var renderStart=0
 function renderWebGL(){
+    curstepiters=100
     numReferences++
     if(curzoom<=1e-250){
         console.log("limit")
@@ -578,10 +594,8 @@ function renderWebGL(){
     glcont.activeTexture(glcont.TEXTURE3)
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,glcont.drawingBufferWidth,glcont.drawingBufferHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
     swapTextures=false
+    renderStart=performance.now()
     renderStep()
-    var anow=performance.now()
-    console.log(anow-pnow,"ms")
-
 }
 
 function render(){
@@ -650,7 +664,7 @@ function resetRender(){
 }
 var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.12235491071428571,"colour":[47,93,167]},{"position":0.3587109375,"colour":[237,237,237]},{"position":0.6516127232142858,"colour":[16,174,213]},{"position":0.8173604910714286,"colour":[48,103,145]},{"position":1,"colour":[138,220,255]}],"length":600}
 function paletteFunc(x){
-    if(x<0)return -16777216
+    if(x<0)return x*10|0
     if(!isFinite(x))return -16777216
     x+=palette.time||0
     let progress=x%palette.length/palette.length
