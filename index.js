@@ -622,25 +622,32 @@ document.getElementById("render-canvas").addEventListener("mousemove",e=>{
     curoy=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
 })
 document.addEventListener("keydown",e=>{
-    if(e.key=="a")curzoom/=2
-    if(e.key=="b")curzoom*=2
+    if(e.key=="a"){
+        curzoom/=2
+        render()
+    }
+    if(e.key=="b"){
+        curzoom*=2
+        render()
+    }
     if(e.key=="p"){
         curref=curpos;
         genReference(curpos)
         renderWebGL()
-        return
     }
     if(e.key=="r"){
         curref=curpos.add(new BigComplex(curox,curoy));
         genReference(curref)
         renderWebGL()
-        return
     }
     if(e.key=="e"){
         curval=(curval+1)%4
         glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
+        render()
     }
-    render()
+    if(e.key=="x"){
+        render()
+    }
 })
 document.getElementById("gotoLocation").addEventListener("click",a=>{
     var nxpos=document.getElementById("xPosition").value
