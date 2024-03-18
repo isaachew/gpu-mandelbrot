@@ -557,6 +557,9 @@ var blackArray=new Float32Array(tileWidth*tileHeight*4)//to reset to black
 var orbitArray=new Float32Array(tileWidth*tileHeight*4)//to set orbit
 var orbitIntArray=new Int32Array(orbitArray.buffer)
 var renderStart=0
+
+var tileOffX=300
+var tileOffY=300
 function startRender(){
     curstepiters=100
     numReferences++
@@ -582,6 +585,7 @@ function startRender(){
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     lastCanvasWrite=0
+    glcont.viewport(-tileOffX,-curHeight+(tileOffY+tileHeight),curWidth,curHeight)
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
@@ -655,10 +659,11 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
 
 
 var curBitmap=rcontext.createImageData(rcanv.width,rcanv.height)
-var curData=new Int32Array(tileWidth*tileHeight)
+var curData=new Int32Array(curWidth*curHeight)
 var curDataByte=new Uint8Array(curData.buffer)
 var pixelsAffected=0
 var numReferences=0
+var tileNum=0//out of 16 for now
 function resetRender(){
     for(var i=0;i<curData.length;i++){
         curData[i]=-1
@@ -687,8 +692,6 @@ function writeTile(){
 }
 function toCanvas(){
     var pixels=new Uint8Array(tileWidth*tileHeight*4)
-    var tileOffX=300
-    var tileOffY=300
     glcont.readPixels(0,0,tileWidth,tileHeight,glcont.RGBA,glcont.UNSIGNED_BYTE,pixels)
     var intPixels=new Int32Array(pixels.buffer)
     for(var i=0;i<tileHeight;i++){
@@ -715,7 +718,7 @@ function toCanvas(){
     for(var i=0;i<tileHeight;i++){
         for(var j=0;j<tileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
-            curIntBitmap[imageIndex]=paletteFunc(curData[i*tileWidth+j])
+            curIntBitmap[imageIndex]=paletteFunc(curData[imageIndex])
         }
     }
     rcontext.putImageData(curBitmap,0,0)
