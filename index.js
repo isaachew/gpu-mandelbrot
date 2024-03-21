@@ -193,7 +193,7 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-2+min(0,unperturbed.exponent);
+            numiters=-3+min(0,unperturbed.exponent);
             break;
         }
 
@@ -205,7 +205,7 @@ void main(){
                 //numiters+=23424;
                 //break;
                 isglitch=true;
-                numiters=-2+min(0,unperturbed.exponent);
+                numiters=-3+min(0,unperturbed.exponent);
                 break;
         }
 
@@ -228,7 +228,7 @@ void main(){
             //precision is 2^-24
             if(lrelerr>-glitchSensitivity){
                 isglitch=true;
-                numiters=-(i+olditers)-2;
+                numiters=-3-(i+olditers);
                 break;
             }
         }
@@ -661,7 +661,7 @@ var pixelsAffected=0
 var numReferences=0
 function resetRender(){
     for(var i=0;i<curData.length;i++){
-        curData[i]=-1
+        curData[i]=-2
     }
     for(var i=0;i<glcont.drawingBufferHeight;i++){
         for(var j=0;j<glcont.drawingBufferWidth;j++){
@@ -671,7 +671,9 @@ function resetRender(){
 }
 var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.12235491071428571,"colour":[47,93,167]},{"position":0.3587109375,"colour":[237,237,237]},{"position":0.6516127232142858,"colour":[16,174,213]},{"position":0.8173604910714286,"colour":[48,103,145]},{"position":1,"colour":[138,220,255]}],"length":600}
 function paletteFunc(x){
-    if(x<0)return x*10|0
+    if(x==-1)return -16777216//in set
+    if(x==-2)return -16777216//not fully computed, may be in set
+    if(x<-2)return x*10|0
     if(!isFinite(x))return -16777216
     x+=palette.time||0
     let progress=x%palette.length/palette.length
@@ -691,16 +693,19 @@ function toCanvas(){
         for(var j=0;j<glcont.drawingBufferWidth;j++){
             var curPixValue=intPixels[(glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j]
             var existingValue=curData[i*glcont.drawingBufferWidth+j]
-            if(existingValue==-1){//always overwrite -1
-                curData[i*glcont.drawingBufferWidth+j]=curPixValue
+            if(curPixValue==-2){//intentionally not calculated
+                continue
+            }
+            if(existingValue==-2){//always overwrite -2 unless -1 (not computed)
+                if(curPixValue!=-1||curiters==maxiters)curData[i*glcont.drawingBufferWidth+j]=curPixValue
             }else{
-                if(curPixValue<=-2){//only overwrite existing glitches
+                if(curPixValue<=-3){//only overwrite existing glitches/not computed
                     if(existingValue<=-2){
                         curData[i*glcont.drawingBufferWidth+j]=Math.max(existingValue,curPixValue)
                     }
                     continue
                 }
-                if(curPixValue!=-1){//write if not -1 (fully computed)
+                if(curPixValue!=-1||curiters==maxiters){//write if not -1 (fully computed) or if -1 and max iters (in set)
                     curData[i*glcont.drawingBufferWidth+j]=curPixValue
                 }
             }
@@ -717,10 +722,10 @@ function toCanvas(){
     for(var i=0;i<glcont.drawingBufferHeight;i++){//make renderer ignore already rendered points
         for(var j=0;j<glcont.drawingBufferWidth;j++){
             if(curData[i*glcont.drawingBufferWidth+j]>=0){
-                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
+                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-2
             }
             if(curData[i*glcont.drawingBufferWidth+j]==-1&&curiters==maxiters){//max iters is fully rendered; do not rerender -1s
-                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-1
+                orbitIntArray[((glcont.drawingBufferHeight-1-i)*glcont.drawingBufferWidth+j)*4+3]=-2
             }
         }
     }
