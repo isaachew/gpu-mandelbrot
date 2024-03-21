@@ -265,9 +265,9 @@ void main(){
 console.time("hi")
 console.log(performance.now())
 
-var tileWidth=256,tileHeight=256
-var curWidth=1024,curHeight=1024
-//glcanv.width=tileWidth,glcanv.height=tileHeight
+var tileWidth=512,tileHeight=512
+var curWidth=4096,curHeight=4096
+glcanv.width=tileWidth,glcanv.height=tileHeight
 //glcont.viewport(0,0,tileWidth,tileHeight)
 
 //Draw a square covering the whole screen
@@ -509,6 +509,8 @@ function renderStep(){
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
         writeTile()
+        tileNum++
+        setTimeout(renderTile)
         return
     }
     var drawStart=performance.now()
@@ -542,7 +544,7 @@ function renderStep(){
         curstepiters/=2
         curstepiters=Math.max(curstepiters,100)
     }
-    console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
+    //console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
     var curTime=+new Date
     if(curTime-lastCanvasWrite>2000){
         toCanvas()
@@ -600,9 +602,21 @@ function startRender(){
     renderStep()
 }
 
+var tileNum=0
+function renderTile(){
+    var horizTiles=Math.ceil(curWidth/tileWidth)
+    var vertTiles=Math.ceil(curHeight/tileHeight)
+    console.log(horizTiles)
+    if(tileNum>=horizTiles*vertTiles)return
+    tileOffX=(tileNum%horizTiles)*tileWidth
+    tileOffY=Math.floor(tileNum/horizTiles)*tileHeight
+    resetTile()
+    startRender()
+}
 function render(){
     resetRender()
-    startRender()
+    tileNum=0
+    renderTile()
 }
 document.getElementById("render-canvas").addEventListener("mousedown",e=>{
     var crect=e.target.getBoundingClientRect()
@@ -663,14 +677,25 @@ var curData=new Int32Array(curWidth*curHeight)
 var curDataByte=new Uint8Array(curData.buffer)
 var pixelsAffected=0
 var numReferences=0
-var tileNum=0//out of 16 for now
+var tileNum=0
 function resetRender(){
     for(var i=0;i<curData.length;i++){
-        curData[i]=-1
+        curData[i]=-2
     }
+}
+function resetTile(){
+
     for(var i=0;i<tileHeight;i++){
         for(var j=0;j<tileWidth;j++){
             orbitIntArray[(i*tileWidth+j)*4+3]=0
+        }
+    }
+    for(var i=0;i<tileHeight;i++){//make renderer ignore already rendered points
+        for(var j=0;j<tileWidth;j++){
+            var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
+            if(curData[imageIndex]>=-1){
+                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
+            }
         }
     }
 }
@@ -687,10 +712,7 @@ function paletteFunc(x){
     let cb=palette.stops[palind].colour[2]*colprog+palette.stops[palind-1].colour[2]*(1-colprog)
     return (cb<<16)|(cg<<8)|cr|-16777216
 }
-function writeTile(){
-
-}
-function toCanvas(){
+function writeTile(){//write tile to array
     var pixels=new Uint8Array(tileWidth*tileHeight*4)
     glcont.readPixels(0,0,tileWidth,tileHeight,glcont.RGBA,glcont.UNSIGNED_BYTE,pixels)
     var intPixels=new Int32Array(pixels.buffer)
@@ -714,26 +736,28 @@ function toCanvas(){
             }
         }
     }
+    for(var i=0;i<tileHeight;i++){//make renderer ignore already rendered points
+        for(var j=0;j<tileWidth;j++){
+            var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
+            if(curData[imageIndex]>=-1){//already computed without glitches
+                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
+            }
+        }
+    }
+    toCanvas()
+}
+function toCanvas(){//write tile to canvas
+    var curImgData=rcontext.createImageData(tileWidth,tileHeight)
+    var curImgInts=new Int32Array(curImgData.data.buffer)
     var curIntBitmap=new Int32Array(curBitmap.data.buffer)
     for(var i=0;i<tileHeight;i++){
         for(var j=0;j<tileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
             curIntBitmap[imageIndex]=paletteFunc(curData[imageIndex])
+            curImgInts[i*tileWidth+j]=paletteFunc(curData[imageIndex])
         }
     }
-    rcontext.putImageData(curBitmap,0,0)
-
-    for(var i=0;i<tileHeight;i++){//make renderer ignore already rendered points
-        for(var j=0;j<tileWidth;j++){
-            var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
-            if(curData[imageIndex]>=0){
-                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
-            }
-            if(curData[imageIndex]==-1&&curiters==maxiters){//max iters is fully rendered; do not rerender -1s
-                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
-            }
-        }
-    }
+    rcontext.putImageData(curImgData,tileOffX,tileOffY)
 }
 function findNewRef(){//todo
     var glitchLoc=null;
