@@ -421,8 +421,10 @@ function getDecimalValue(num,digits=Number(fixedFactor)+1){
         num=-num
         st+="-"
     }
+    var roundFactor=1n<<(fixedFactor-1n)//round
+    for(var i=0;i<digits-1;i++)roundFactor/=10
+    num+=roundFactor
     for(var i=0;i<digits;i++){
-        if(i==digits-1)num+=1n<<(fixedFactor-1n)//round
         var nump=num>>fixedFactor
         st+=nump
         if(i==0)st+="."
