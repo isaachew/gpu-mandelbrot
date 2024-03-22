@@ -193,7 +193,7 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-2;//glitch with least priority
+            numiters=-3+min(0,unperturbed.exponent);
             break;
         }
 
@@ -205,7 +205,7 @@ void main(){
                 //numiters+=23424;
                 //break;
                 isglitch=true;
-                numiters=-2+min(0,unperturbed.exponent);
+                numiters=-3+min(0,unperturbed.exponent);
                 break;
         }
 
@@ -228,7 +228,7 @@ void main(){
             //precision is 2^-24
             if(lrelerr>-glitchSensitivity){
                 isglitch=true;
-                numiters=-(i+olditers)-2;
+                numiters=-3-(i+olditers);
                 break;
             }
         }
@@ -424,8 +424,10 @@ function getDecimalValue(num,digits=Number(fixedFactor)+1){
         num=-num
         st+="-"
     }
+    var roundFactor=1n<<(fixedFactor-1n)//round
+    for(var i=0;i<digits-1;i++)roundFactor/=10
+    num+=roundFactor
     for(var i=0;i<digits;i++){
-        if(i==digits-1)num+=1n<<(fixedFactor-1n)//round
         var nump=num>>fixedFactor
         st+=nump
         if(i==0)st+="."
@@ -673,7 +675,7 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
 })
 
 
-var curBitmap=rcontext.createImageData(rcanv.width,rcanv.height)
+var curBitmap=rcontext.createImageData(curWidth,curHeight)
 var curData=new Int32Array(curWidth*curHeight)
 var curDataByte=new Uint8Array(curData.buffer)
 var pixelsAffected=0
@@ -695,14 +697,16 @@ function resetTile(){
         for(var j=0;j<tileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
             if(curData[imageIndex]>=-1){
-                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
+                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-2
             }
         }
     }
 }
 var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.12235491071428571,"colour":[47,93,167]},{"position":0.3587109375,"colour":[237,237,237]},{"position":0.6516127232142858,"colour":[16,174,213]},{"position":0.8173604910714286,"colour":[48,103,145]},{"position":1,"colour":[138,220,255]}],"length":600}
 function paletteFunc(x){
-    if(x<0)return x*10|0
+    if(x==-1)return -16777216//in set
+    if(x==-2)return -16777216//not fully computed, may be in set
+    if(x<-2)return x*10|0
     if(!isFinite(x))return -16777216
     x+=palette.time||0
     let progress=x%palette.length/palette.length
@@ -722,16 +726,19 @@ function writeTile(){//write tile to array
             var curPixValue=intPixels[(tileHeight-1-i)*tileWidth+j]
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
             var existingValue=curData[imageIndex]
-            if(existingValue==-1){//always overwrite -1
-                curData[imageIndex]=curPixValue
+            if(curPixValue==-2){//intentionally not calculated
+                continue
+            }
+            if(existingValue==-2){//always overwrite -2 unless -1 (not computed)
+                if(curPixValue!=-1||curiters==maxiters)curData[imageIndex]=curPixValue
             }else{
-                if(curPixValue<=-2){//only overwrite existing glitches
+                if(curPixValue<=-3){//only overwrite existing glitches/not computed
                     if(existingValue<=-2){
                         curData[imageIndex]=Math.max(existingValue,curPixValue)
                     }
                     continue
                 }
-                if(curPixValue!=-1){//write if not -1 (fully computed)
+                if(curPixValue!=-1||curiters==maxiters){//write if not -1 (fully computed) or if -1 and max iters (in set)
                     curData[imageIndex]=curPixValue
                 }
             }
@@ -740,8 +747,8 @@ function writeTile(){//write tile to array
     for(var i=0;i<tileHeight;i++){//make renderer ignore already rendered points
         for(var j=0;j<tileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
-            if(curData[imageIndex]>=-1){//already computed without glitches
-                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-1
+            if(curData[imageIndex]>=-1){
+                orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-2
             }
         }
     }
