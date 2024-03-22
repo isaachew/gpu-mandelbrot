@@ -265,8 +265,8 @@ void main(){
 console.time("hi")
 console.log(performance.now())
 
-var tileWidth=512,tileHeight=512
-var curWidth=4096,curHeight=4096
+var tileWidth=256,tileHeight=256
+var curWidth=1024,curHeight=1024
 rcanv.width=curWidth,rcanv.height=curHeight
 glcanv.width=tileWidth,glcanv.height=tileHeight
 //glcont.viewport(0,0,tileWidth,tileHeight)
@@ -505,9 +505,57 @@ var maxstepiters=10000,curstepiters=100,curiters=0
 genReference(new BigComplex(0,0))
 var swapTextures=false
 
+var blackArray=new Float32Array(tileWidth*tileHeight*4)//to reset to black
+var orbitArray=new Float32Array(tileWidth*tileHeight*4)//to set orbit
+var orbitIntArray=new Int32Array(orbitArray.buffer)
+var renderStart=0
+
+var tileOffX=300
+var tileOffY=300
+
 var readBuffer=new Uint8Array(4096)//where readpixels
 var glitchDetection=false
-var lastCanvasWrite=0
+var lastPause=performance.now()
+function startRender(){//start rendering a tile in WebGL
+    curstepiters=100
+    numReferences++
+    if(curzoom<=1e-250){
+        console.log("limit")
+        curzoom=1e-250
+    }
+    curiters=0
+    var pnow=performance.now()
+
+    var fcoords=curpos.sub(curref).toFloats()
+    var clscale=Math.floor(Math.log2(curzoom))
+    console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+    console.log("scale ",curzoom*2**-clscale)
+    console.log("iters ",maxiters)
+    console.log("zooms ",clscale)
+    console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
+    glcont.useProgram(mandelProgram)
+    glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+
+    glcont.uniform1f(scaleIndex,curzoom*2**-clscale)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
+    glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
+    lastCanvasWrite=0
+    glcont.viewport(-tileOffX,-curHeight+(tileOffY+tileHeight),curWidth,curHeight)
+    /*
+    glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
+    glcont.uniform1f(scaleIndex,curzoom)
+    */
+    //reset textures
+    glcont.activeTexture(glcont.TEXTURE2)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,tileWidth,tileHeight,0,glcont.RGBA,glcont.FLOAT,orbitArray)
+    glcont.activeTexture(glcont.TEXTURE3)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,tileWidth,tileHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
+    swapTextures=false
+    renderStart=performance.now()
+    renderStep()
+}
+
 function renderStep(){
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
@@ -548,61 +596,22 @@ function renderStep(){
         curstepiters=Math.max(curstepiters,100)
     }
     //console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
-    var curTime=+new Date
-    if(curTime-lastCanvasWrite>2000){
+    var curTime=performance.now()
+    if(curTime-lastCanvasWrite>20){
+        console.log("canvas")
         toCanvas()
-        lastCanvasWrite=+new Date
+        lastCanvasWrite=performance.now()
     }
     swapTextures=!swapTextures
     curiters+=renderediters
     numRenderedIters.textContent=curiters
-    setTimeout(renderStep)
-}
-var blackArray=new Float32Array(tileWidth*tileHeight*4)//to reset to black
-var orbitArray=new Float32Array(tileWidth*tileHeight*4)//to set orbit
-var orbitIntArray=new Int32Array(orbitArray.buffer)
-var renderStart=0
-
-var tileOffX=300
-var tileOffY=300
-function startRender(){
-    curstepiters=100
-    numReferences++
-    if(curzoom<=1e-250){
-        console.log("limit")
-        curzoom=1e-250
+    if(curTime-lastPause>20){
+        lastPause=curTime
+        setTimeout(renderStep)
+    }else{
+        console.log("continue")
+        renderStep()
     }
-    curiters=0
-    var pnow=performance.now()
-
-    var fcoords=curpos.sub(curref).toFloats()
-    var clscale=Math.floor(Math.log2(curzoom))
-    console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
-    console.log("scale ",curzoom*2**-clscale)
-    console.log("iters ",maxiters)
-    console.log("zooms ",clscale)
-    console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
-    glcont.useProgram(mandelProgram)
-    glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
-
-    glcont.uniform1f(scaleIndex,curzoom*2**-clscale)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
-    glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
-    lastCanvasWrite=0
-    glcont.viewport(-tileOffX,-curHeight+(tileOffY+tileHeight),curWidth,curHeight)
-    /*
-    glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
-    glcont.uniform1f(scaleIndex,curzoom)
-    */
-    //reset textures
-    glcont.activeTexture(glcont.TEXTURE2)
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,tileWidth,tileHeight,0,glcont.RGBA,glcont.FLOAT,orbitArray)
-    glcont.activeTexture(glcont.TEXTURE3)
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,tileWidth,tileHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
-    swapTextures=false
-    renderStart=performance.now()
-    renderStep()
 }
 
 var tileNum=0
