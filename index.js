@@ -267,6 +267,7 @@ console.log(performance.now())
 
 var tileWidth=512,tileHeight=512
 var curWidth=4096,curHeight=4096
+rcanv.width=curWidth,rcanv.height=curHeight
 glcanv.width=tileWidth,glcanv.height=tileHeight
 //glcont.viewport(0,0,tileWidth,tileHeight)
 
