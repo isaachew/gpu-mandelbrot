@@ -269,7 +269,7 @@ var tileWidth=256,tileHeight=256
 var curWidth=1024,curHeight=1024
 rcanv.width=curWidth,rcanv.height=curHeight
 glcanv.width=tileWidth,glcanv.height=tileHeight
-//glcont.viewport(0,0,tileWidth,tileHeight)
+glcont.viewport(0,0,tileWidth,tileHeight)
 
 //Draw a square covering the whole screen
 var positionIndex=glcont.getAttribLocation(mandelProgram,"position")
@@ -528,20 +528,23 @@ function startRender(){//start rendering a tile in WebGL
 
     var fcoords=curpos.sub(curref).toFloats()
     var clscale=Math.floor(Math.log2(curzoom))
-    console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
-    console.log("scale ",curzoom*2**-clscale)
+    var ciscale=curzoom*2**-clscale
+    //console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+    console.log("scale ",ciscale)
     console.log("iters ",maxiters)
     console.log("zooms ",clscale)
     console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
     glcont.useProgram(mandelProgram)
-    glcont.uniform2fv(offsetIndex,[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+    var curOffset=[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale]
+    curOffset[0]+=(2*(tileOffX+tileWidth/2)/curWidth-1)*ciscale
+    curOffset[1]-=(2*(tileOffY+tileHeight/2)/curHeight-1)*ciscale
+    glcont.uniform2fv(offsetIndex,curOffset)
 
-    glcont.uniform1f(scaleIndex,curzoom*2**-clscale)
+    glcont.uniform1f(scaleIndex,ciscale*tileWidth/curWidth)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     lastCanvasWrite=0
-    glcont.viewport(-tileOffX,-curHeight+(tileOffY+tileHeight),curWidth,curHeight)
     /*
     glcont.uniform2fv(offsetIndex,curpos.sub(curref).toFloats())
     glcont.uniform1f(scaleIndex,curzoom)
@@ -597,7 +600,7 @@ function renderStep(){
     }
     //console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
     var curTime=performance.now()
-    if(curTime-lastCanvasWrite>20){
+    if(curTime-lastCanvasWrite>2000){
         console.log("canvas")
         toCanvas()
         lastCanvasWrite=performance.now()
