@@ -515,6 +515,7 @@ var tileOffY=300
 
 var readBuffer=new Uint8Array(4096)//where readpixels
 var glitchDetection=false
+var willRender=false
 var lastPause=performance.now()
 function startRender(){//start rendering a tile in WebGL
     curstepiters=100
@@ -556,10 +557,11 @@ function startRender(){//start rendering a tile in WebGL
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,tileWidth,tileHeight,0,glcont.RGBA,glcont.FLOAT,blackArray)
     swapTextures=false
     renderStart=performance.now()
-    renderStep()
+    if(!willRender)renderStep()
 }
 
 function renderStep(){
+    willRender=false
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
         writeTile()
@@ -610,82 +612,12 @@ function renderStep(){
     numRenderedIters.textContent=curiters
     if(curTime-lastPause>20){
         lastPause=curTime
+        willRender=true
         setTimeout(renderStep)
     }else{
-        console.log("continue")
         renderStep()
     }
 }
-
-var tileNum=0
-function renderTile(){
-    var horizTiles=Math.ceil(curWidth/tileWidth)
-    var vertTiles=Math.ceil(curHeight/tileHeight)
-    console.log(horizTiles)
-    if(tileNum>=horizTiles*vertTiles)return
-    tileOffX=(tileNum%horizTiles)*tileWidth
-    tileOffY=Math.floor(tileNum/horizTiles)*tileHeight
-    resetTile()
-    startRender()
-}
-function render(){
-    resetRender()
-    tileNum=0
-    renderTile()
-}
-document.getElementById("render-canvas").addEventListener("mousedown",e=>{
-    var crect=e.target.getBoundingClientRect()
-    var xoffset=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
-    var yoffset=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
-    curpos=curpos.add(new BigComplex(xoffset,yoffset))
-    if(e.button==0)curzoom/=2
-    if(e.button==2)curzoom*=2
-    render()
-    e.preventDefault()
-})
-document.getElementById("render-canvas").addEventListener("contextmenu",e=>{
-    e.preventDefault()
-})
-var curox,curoy;
-document.getElementById("render-canvas").addEventListener("mousemove",e=>{
-    var crect=e.target.getBoundingClientRect()
-    curox=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
-    curoy=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
-})
-document.addEventListener("keydown",e=>{
-    if(e.key=="a"){
-        curzoom/=2
-        render()
-    }
-    if(e.key=="b"){
-        curzoom*=2
-        render()
-    }
-    if(e.key=="p"){
-        curref=curpos;
-        genReference(curpos)
-        startRender()
-    }
-    if(e.key=="r"){
-        curref=curpos.add(new BigComplex(curox,curoy));
-        genReference(curref)
-        startRender()
-    }
-    if(e.key=="e"){
-        curval=(curval+1)%4
-        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
-        render()
-    }
-    if(e.key=="x"){
-        render()
-    }
-})
-document.getElementById("gotoLocation").addEventListener("click",a=>{
-    var nxpos=document.getElementById("xPosition").value
-    var nypos=document.getElementById("yPosition").value
-    curpos=new BigComplex(nxpos,nypos)
-})
-
 
 var curBitmap=rcontext.createImageData(curWidth,curHeight)
 var curData=new Int32Array(curWidth*curHeight)
@@ -782,17 +714,17 @@ function toCanvas(){//write tile to canvas
 function findNewRef(){//todo
     var glitchLoc=null;
     var maxGlitchIters=-1
-    for(var i=0;i<tileHeight;i++){
-        for(var j=0;j<tileWidth;j++){
-            var cdata=curData[tileWidth*i+j]
-            if(curData[tileWidth*i+j-1]>-2)continue
-            if(curData[tileWidth*i+j-tileWidth]>-2)continue
-            if(curData[tileWidth*i+j+1]>-2)continue
-            if(curData[tileWidth*i+j+tileWidth]>-2)continue
-            if(cdata<=-2){
-                if(-2-cdata>maxGlitchIters){
+    for(var i=0;i<curHeight;i++){
+        for(var j=0;j<curWidth;j++){
+            var cdata=curData[curWidth*i+j]
+            if(curData[curWidth*i+j-1]>-3)continue
+            if(curData[curWidth*i+j-curWidth]>-3)continue
+            if(curData[curWidth*i+j+1]>-3)continue
+            if(curData[curWidth*i+j+curWidth]>-3)continue
+            if(cdata<=-3){
+                if(-3-cdata>maxGlitchIters){
                     glitchLoc=[j,i]//on canvas
-                    maxGlitchIters=-2-cdata
+                    maxGlitchIters=-3-cdata
                 }
             }
         }
@@ -802,15 +734,96 @@ function findNewRef(){//todo
         console.log("no glitch")
         return
     }
-    var glitchOffX=((glitchLoc[0]+0.5)/tileWidth*2-1)*curzoom
-    var glitchOffY=-((glitchLoc[1]+0.5)/tileHeight*2-1)*curzoom
+    rcontext.strokeStyle="red"
+    rcontext.lineWidth=10
+    rcontext.beginPath()
+    rcontext.rect(glitchLoc[0]-20,glitchLoc[1]-20,30,30)
+    rcontext.stroke()
+    var glitchOffX=((glitchLoc[0]+0.5)/curWidth*2-1)*curzoom
+    var glitchOffY=-((glitchLoc[1]+0.5)/curHeight*2-1)*curzoom
     console.log(glitchOffX,glitchOffY)
     var glitchPos=curpos.add(new BigComplex(glitchOffX,glitchOffY))
     curref=glitchPos
     genReference(curref)
     var orbitIntArray=new Int32Array(orbitArray.buffer)
+    tileNum=0
+    setTimeout(renderTile,1000)
+}
+
+function renderTile(){
+    var horizTiles=Math.ceil(curWidth/tileWidth)
+    var vertTiles=Math.ceil(curHeight/tileHeight)
+    console.log(horizTiles)
+    if(tileNum>=horizTiles*vertTiles){
+        if(glitchDetection)findNewRef()
+        return
+    }
+    tileOffX=(tileNum%horizTiles)*tileWidth
+    tileOffY=Math.floor(tileNum/horizTiles)*tileHeight
+    resetTile()
     startRender()
 }
+function render(){
+    resetRender()
+    tileNum=0
+    renderTile()
+}
+
+
+document.getElementById("render-canvas").addEventListener("mousedown",e=>{
+    var crect=e.target.getBoundingClientRect()
+    var xoffset=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
+    var yoffset=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
+    curpos=curpos.add(new BigComplex(xoffset,yoffset))
+    if(e.button==0)curzoom/=2
+    if(e.button==2)curzoom*=2
+    render()
+    e.preventDefault()
+})
+document.getElementById("render-canvas").addEventListener("contextmenu",e=>{
+    e.preventDefault()
+})
+var curox,curoy;
+document.getElementById("render-canvas").addEventListener("mousemove",e=>{
+    var crect=e.target.getBoundingClientRect()
+    curox=(e.offsetX/(crect.right-crect.left)-0.5)*2*curzoom
+    curoy=-(e.offsetY/(crect.bottom-crect.top)-0.5)*2*curzoom
+})
+document.addEventListener("keydown",e=>{
+    if(e.key=="a"){
+        curzoom/=2
+        render()
+    }
+    if(e.key=="b"){
+        curzoom*=2
+        render()
+    }
+    if(e.key=="p"){
+        curref=curpos;
+        genReference(curpos)
+        tileNum=0
+        renderTile()
+    }
+    if(e.key=="r"){
+        curref=curpos.add(new BigComplex(curox,curoy));
+        genReference(curref)
+        tileNum=0
+        renderTile()
+    }
+    if(e.key=="e"){
+        curval=(curval+1)%4
+        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
+        render()
+    }
+    if(e.key=="x"){
+        render()
+    }
+})
+document.getElementById("gotoLocation").addEventListener("click",a=>{
+    var nxpos=document.getElementById("xPosition").value
+    var nypos=document.getElementById("yPosition").value
+    curpos=new BigComplex(nxpos,nypos)
+})
 //-0.7497201102120534 0.028404976981026727 0.0000152587890625
 //-1.98547607421875 0 0.00006103515625
 //-1.3691932896205354 0.005801304408481992 0.000030517578125
