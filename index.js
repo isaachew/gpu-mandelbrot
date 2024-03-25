@@ -504,6 +504,7 @@ var swapTextures=false
 var readBuffer=new Uint8Array(4096)//where readpixels
 var glitchDetection=false
 var lastCanvasWrite=0
+var lastPause=0
 function renderStep(){
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
@@ -547,15 +548,21 @@ function renderStep(){
         curstepiters=Math.max(curstepiters,100)
     }
     console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
-    var curTime=+new Date
+    var curTime=performance.now()
     if(curTime-lastCanvasWrite>2000){
         toCanvas()
-        lastCanvasWrite=+new Date
+        lastCanvasWrite=performance.now()
     }
     swapTextures=!swapTextures
     curiters+=renderediters
     numRenderedIters.textContent=curiters
-    setTimeout(renderStep)
+    if(curTime-lastPause>20){
+        lastPause=curTime
+        setTimeout(renderStep)
+    }else{
+        console.log("continue")
+        renderStep()
+    }
 }
 var blackArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to reset to black
 var orbitArray=new Float32Array(glcont.drawingBufferWidth*glcont.drawingBufferHeight*4)//to set orbit
