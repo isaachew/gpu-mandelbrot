@@ -265,7 +265,7 @@ void main(){
 console.time("hi")
 console.log(performance.now())
 
-var tileWidth=256,tileHeight=256
+var tileWidth=512,tileHeight=512
 var curWidth=1024,curHeight=1024
 rcanv.width=curWidth,rcanv.height=curHeight
 glcanv.width=tileWidth,glcanv.height=tileHeight
@@ -338,19 +338,20 @@ function genReference(cval){//write floatexp
     var zval=new BigComplex(0,0);
 
     curtex=farr
+    var calcStart=performance.now()
     //var occurred=new Map()
     //var period=null
-    var escaped=false
+    var escaped=null
     for(var i=0;i<maxiters;i++){
         var [zx,zy,zexp]=zval.toFloatexp()
         farr[i*3]=zx;
         farr[i*3+1]=zy;
         farr[i*3+2]=zexp;
-        if(!escaped){
+        if(escaped==null){
             try{
                 zval=zval.mul(zval).add(cval)
             }catch{
-                escaped=true
+                escaped=i
             }
         }
         /*
@@ -361,10 +362,10 @@ function genReference(cval){//write floatexp
         occurred.set(""+[zx,zy],i)
         */
     }
-
     glcont.activeTexture(glcont.TEXTURE0)
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
-
+    var calcEnd=performance.now()
+    console.log((calcEnd-calcStart)+" ms to calc "+(escaped==null?maxiters:escaped)+" iterations")
 }
 
 
@@ -564,6 +565,8 @@ function renderStep(){
     willRender=false
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
+        var renderEnd=performance.now()
+        console.log(`tile ${tileNum} rendered in ${renderEnd-renderStart} ms`)
         writeTile()
         tileNum++
         setTimeout(renderTile)
@@ -604,7 +607,7 @@ function renderStep(){
     var curTime=performance.now()
     if(curTime-lastCanvasWrite>2000){
         console.log("canvas")
-        toCanvas()
+        writeTile()
         lastCanvasWrite=performance.now()
     }
     swapTextures=!swapTextures
@@ -622,6 +625,14 @@ function renderStep(){
 var curBitmap=rcontext.createImageData(curWidth,curHeight)
 var curData=new Int32Array(curWidth*curHeight)
 var curDataByte=new Uint8Array(curData.buffer)
+function resizeImage(){
+    rcanv.width=curWidth
+    rcanv.height=curHeight
+    curBitmap=rcontext.createImageData(curWidth,curHeight)
+    curData=new Int32Array(curWidth*curHeight)
+    curDataByte=new Uint8Array(curData.buffer)
+}
+
 var pixelsAffected=0
 var numReferences=0
 var tileNum=0
@@ -650,6 +661,7 @@ var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.122354
 function paletteFunc(x){
     if(x==-1)return -16777216//in set
     if(x==-2)return -16777216//not fully computed, may be in set
+    if(x==1234567)return -16777216//glitch
     if(x<-2)return x*10|0
     if(!isFinite(x))return -16777216
     x+=palette.time||0
@@ -711,25 +723,62 @@ function toCanvas(){//write tile to canvas
     }
     rcontext.putImageData(curImgData,tileOffX,tileOffY)
 }
-function findNewRef(){//todo
-    var glitchLoc=null;
-    var maxGlitchIters=-1
+function findNewRef(){//remove glitches with size < 15
+    var pointArray=new Uint32Array(curWidth*curHeight)//points that are visited
+    var pointSet=[]
+    var curPoints=[]//points to dfs
+    var glitchSize=0
+    var glitchLoc=null
     for(var i=0;i<curHeight;i++){
         for(var j=0;j<curWidth;j++){
-            var cdata=curData[curWidth*i+j]
-            if(curData[curWidth*i+j-1]>-3)continue
-            if(curData[curWidth*i+j-curWidth]>-3)continue
-            if(curData[curWidth*i+j+1]>-3)continue
-            if(curData[curWidth*i+j+curWidth]>-3)continue
-            if(cdata<=-3){
-                if(-3-cdata>maxGlitchIters){
-                    glitchLoc=[j,i]//on canvas
-                    maxGlitchIters=-3-cdata
+            var coordIndex=i*curWidth+j
+            if(curData[coordIndex]<-2&&pointArray[coordIndex]==0){
+                pointSet=[]
+                curPoints.push([j,i]);
+                while(curPoints.length){
+                    var curPoint=curPoints.pop();
+                    if(curPoint[0]<0||curPoint[0]>=curWidth)continue
+                    if(curPoint[1]<0||curPoint[1]>=curHeight)continue
+                    var curCoordIndex=curPoint[1]*curWidth+curPoint[0]
+                    if(curData[curCoordIndex]>=-2)continue
+                    if(pointArray[curCoordIndex]==0){
+                        pointArray[curCoordIndex]=coordIndex+1
+                        pointSet.push(curPoint)
+                        curPoints.push([curPoint[0]+1,curPoint[1]])
+                        curPoints.push([curPoint[0]-1,curPoint[1]])
+                        curPoints.push([curPoint[0],curPoint[1]+1])
+                        curPoints.push([curPoint[0],curPoint[1]-1])
+                    }
+
+                }
+                if(pointSet.length<15){
+                    for(var k of pointSet){
+                        var pCoordIndex=k[1]*curWidth+k[0]
+                        curData[pCoordIndex]=1234567
+                    }
+                }else if(pointSet.length>glitchSize){
+                    var avgPoint=[0,0]
+                    for(var k of pointSet){
+                        avgPoint[0]+=k[0]
+                        avgPoint[1]+=k[1]
+                    }
+                    avgPoint[0]/=pointSet.length
+                    avgPoint[0]|=0
+                    avgPoint[1]/=pointSet.length
+                    avgPoint[1]|=0
+                    if(pointArray[avgPoint[1]*curWidth+avgPoint[0]]==coordIndex+1){
+                        console.log("avg point in glitch")
+                        glitchLoc=avgPoint
+                    }else{
+                        console.log("avg point not in glitch")
+                        glitchLoc=pointSet[pointSet.length*Math.random()|0]
+                    }
+                    glitchSize=pointSet.length
                 }
             }
+
         }
     }
-    console.log("found with score ",maxGlitchIters)
     if(glitchLoc==null){
         console.log("no glitch")
         return
@@ -737,7 +786,7 @@ function findNewRef(){//todo
     rcontext.strokeStyle="red"
     rcontext.lineWidth=10
     rcontext.beginPath()
-    rcontext.rect(glitchLoc[0]-20,glitchLoc[1]-20,30,30)
+    rcontext.rect(glitchLoc[0]-20,glitchLoc[1]-20,40,40)
     rcontext.stroke()
     var glitchOffX=((glitchLoc[0]+0.5)/curWidth*2-1)*curzoom
     var glitchOffY=-((glitchLoc[1]+0.5)/curHeight*2-1)*curzoom
@@ -747,7 +796,7 @@ function findNewRef(){//todo
     genReference(curref)
     var orbitIntArray=new Int32Array(orbitArray.buffer)
     tileNum=0
-    setTimeout(renderTile,1000)
+    setTimeout(renderTile)
 }
 
 function renderTile(){
