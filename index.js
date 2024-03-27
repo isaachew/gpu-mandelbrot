@@ -421,12 +421,12 @@ console.timeEnd("hi")
 var fixedFactor=896n
 function getDecimalValue(num,digits=Number(fixedFactor)+1){
     var st=""
-    if(num<0){
+    if(num<0n){
         num=-num
         st+="-"
     }
     var roundFactor=1n<<(fixedFactor-1n)//round
-    for(var i=0;i<digits-1;i++)roundFactor/=10
+    for(var i=0;i<digits-1;i++)roundFactor/=10n
     num+=roundFactor
     for(var i=0;i<digits;i++){
         var nump=num>>fixedFactor
