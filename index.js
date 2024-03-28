@@ -23,6 +23,9 @@ function createProgram(context,vertSource,fragSource){
     }
     return shaderProgram
 }
+//skip 3622, period 3623
+//z deriv: [2816879256891.291, 857557660233.6929]; works 1e-24
+//c deriv: [40470254079639.195, 8146744650592.539]; works 1e-24
 var mandelProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
@@ -39,7 +42,8 @@ precision highp int;
 in vec2 fractalPos;
 uniform int numzooms;//additional number of zooms to do after float
 
-uniform int maxiters;//make sure small otherwise GPU will crash
+uniform int renderediters;//make sure small otherwise GPU will crash
+uniform int maxiters;
 uniform highp sampler2D lastorbit;//information about previous iterations: x, y, exp, number of iterations
 uniform highp sampler2D lastorbit2;//glitch detection
 uniform highp sampler2D reference;//reference orbit
@@ -178,17 +182,23 @@ void main(){
     }
     floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
 
-    int numiters=-1;
+    bool escaped=false;
+    int numiters=olditers;
+
     bool isglitch=false;
     float curlderiv=posData2.x;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
     floatexpPosition.exponent+=numzooms;
     float lcrad=log2(length(floatexpPosition.mantissa))+float(floatexpPosition.exponent);
-    for(int i=0;i<maxiters;i++){
-        exp_complex curref=getRef(i+olditers);
+    for(int i=0;i<renderediters;i++){
+        if(numiters>maxiters){//too many iters, no reference
+            numiters=-1;
+            break;
+        }
+        exp_complex curref=getRef(numiters);
         exp_complex unperturbed=add(curpos,curref);
-        if(unperturbed.exponent>=1){
-            numiters=i;
+        if(unperturbed.exponent>=1){//normal bailout
+            escaped=true;
             break;
         }
         if(curref.exponent>=1){
@@ -208,14 +218,18 @@ void main(){
                 numiters=-3+min(0,unperturbed.exponent);
                 break;
         }
-
-
-        if(i>0||olditers>0){
+        if(numiters>0){
             curlderiv+=1.0+lrad_unpert;
         }
 
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
-        curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
+        if(numiters%3623==1&&floatexpPosition.exponent<-80&&curpos.exponent<-80&&paletteparam==2){//bla
+            curpos=add(mul(curpos,tofloatexp(vec2(2816879256891.291, 857557660233.6929))),mul(floatexpPosition,tofloatexp(vec2(40470254079639.195, 8146744650592.539))));
+            numiters+=3622;
+        }else{
+            curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
+            numiters++;
+        }
 
         if(paletteparam==1){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
@@ -228,14 +242,17 @@ void main(){
             //precision is 2^-24
             if(lrelerr>-glitchSensitivity){
                 isglitch=true;
-                numiters=-3-(i+olditers);
+                numiters=-3-numiters;
                 break;
             }
         }
     }
-    if(numiters>=0)numiters+=olditers;
-    outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
-    if(numiters==-1)numiters=maxiters+olditers;
+    if(escaped||numiters<0){//escaped or glitch
+        outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
+    }else{
+        highp int mone=-1;
+        outputColour=vec4(intBitsToFloat(mone),0.0,0.0,0.0);
+    }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
     orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),0.0);
     /*
@@ -543,7 +560,8 @@ function startRender(){//start rendering a tile in WebGL
     glcont.uniform2fv(offsetIndex,curOffset)
 
     glcont.uniform1f(scaleIndex,ciscale*tileWidth/curWidth)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"renderediters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),maxiters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     lastCanvasWrite=0
@@ -574,7 +592,7 @@ function renderStep(){
     }
     var drawStart=performance.now()
     glcont.useProgram(mandelProgram)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"renderediters"),renderediters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?4:2)//last orbit in texture unit 2 or 4
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit2"),swapTextures?5:3)//last orbit in texture unit 3 or 5
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
@@ -662,7 +680,7 @@ function paletteFunc(x){
     if(x==-1)return -16777216//in set
     if(x==-2)return -16777216//not fully computed, may be in set
     if(x==1234567)return -16777216//glitch
-    if(x<-2)return x*10|0
+    if(x<-2)return 16711680|-16777216
     if(!isFinite(x))return -16777216
     x+=palette.time||0
     let progress=x%palette.length/palette.length
@@ -756,6 +774,7 @@ function findNewRef(){//remove glitches with size < 15
                         var pCoordIndex=k[1]*curWidth+k[0]
                         curData[pCoordIndex]=1234567
                     }
+
                 }else if(pointSet.length>glitchSize){
                     var avgPoint=[0,0]
                     for(var k of pointSet){
