@@ -304,34 +304,6 @@ enableTexture()
 glcont.uniform1i(refIndex,0)
 
 var curtex;
-function genReference(cval){
-    var farr=new Float32Array(32768)
-    var zval=new BigComplex(0,0);
-    //var occurred=new Map()
-    //var period=null
-    var escaped=false
-    for(var i=0;i<16384;i++){
-        var [zx,zy]=zval.toFloats()
-        farr[i*2]=zx;
-        farr[i*2+1]=zy;
-        if(!escaped){
-            try{
-                zval=zval.mul(zval).add(cval)
-            }catch{
-                escaped=true
-            }
-        }
-        /*
-        if(occurred.has(""+[zx,zy])&&period==null){
-            console.log("found",occurred.get(""+[zx,zy]),i)
-            period=occurred.get(""+[zx,zy])-i
-        }
-        occurred.set(""+[zx,zy],i)
-        */
-    }
-    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RG32F,16384,1,0,glcont.RG,glcont.FLOAT,farr)
-
-}
 var maxiters=16384
 function genReference(cval){//write floatexp
     var farr=new Float32Array(Math.ceil(maxiters/16384)*16384*3)
@@ -538,8 +510,8 @@ function startRender(){//start rendering a tile in WebGL
     console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
     glcont.useProgram(mandelProgram)
     var curOffset=[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale]
-    curOffset[0]+=(2*(tileOffX+tileWidth/2)/curWidth-1)*ciscale
-    curOffset[1]-=(2*(tileOffY+tileHeight/2)/curHeight-1)*ciscale
+    curOffset[0]+=2*(tileOffX+tileWidth/2-curWidth/2)/curWidth*ciscale
+    curOffset[1]-=2*(tileOffY+tileHeight/2-curHeight/2)/curWidth*ciscale
     glcont.uniform2fv(offsetIndex,curOffset)
 
     glcont.uniform1f(scaleIndex,ciscale*tileWidth/curWidth)
@@ -651,7 +623,8 @@ function resetTile(){
     for(var i=0;i<tileHeight;i++){//make renderer ignore already rendered points
         for(var j=0;j<tileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
-            if(curData[imageIndex]>=-1){
+            var outOfBounds=(i+tileOffY>=curHeight)||(j+tileOffX>=curWidth)
+            if(outOfBounds||curData[imageIndex]>=-1){
                 orbitIntArray[((tileHeight-1-i)*tileWidth+j)*4+3]=-2
             }
         }
@@ -714,8 +687,10 @@ function toCanvas(){//write tile to canvas
     var curImgData=rcontext.createImageData(tileWidth,tileHeight)
     var curImgInts=new Int32Array(curImgData.data.buffer)
     var curIntBitmap=new Int32Array(curBitmap.data.buffer)
-    for(var i=0;i<tileHeight;i++){
-        for(var j=0;j<tileWidth;j++){
+    var realTileWidth=Math.min(tileWidth,curWidth-tileOffX)
+    var realTileHeight=Math.min(tileHeight,curHeight-tileOffY)
+    for(var i=0;i<realTileHeight;i++){
+        for(var j=0;j<realTileWidth;j++){
             var imageIndex=(i+tileOffY)*curWidth+(j+tileOffX)
             curIntBitmap[imageIndex]=paletteFunc(curData[imageIndex])
             curImgInts[i*tileWidth+j]=paletteFunc(curData[imageIndex])
@@ -788,8 +763,8 @@ function findNewRef(){//remove glitches with size < 15
     rcontext.beginPath()
     rcontext.rect(glitchLoc[0]-20,glitchLoc[1]-20,40,40)
     rcontext.stroke()
-    var glitchOffX=((glitchLoc[0]+0.5)/curWidth*2-1)*curzoom
-    var glitchOffY=-((glitchLoc[1]+0.5)/curHeight*2-1)*curzoom
+    var glitchOffX=((glitchLoc[0]+0.5-curWidth/2)/curWidth*2)*curzoom
+    var glitchOffY=-((glitchLoc[1]+0.5-curHeight/2)/curWidth*2)*curzoom
     console.log(glitchOffX,glitchOffY)
     var glitchPos=curpos.add(new BigComplex(glitchOffX,glitchOffY))
     curref=glitchPos
@@ -817,7 +792,6 @@ function render(){
     tileNum=0
     renderTile()
 }
-
 
 document.getElementById("render-canvas").addEventListener("mousedown",e=>{
     var crect=e.target.getBoundingClientRect()
@@ -872,6 +846,19 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
     var nxpos=document.getElementById("xPosition").value
     var nypos=document.getElementById("yPosition").value
     curpos=new BigComplex(nxpos,nypos)
+})
+
+document.getElementById("downloadButton").addEventListener("click",e=>{
+    rcanv.toBlob(a=>{
+        objurl=URL.createObjectURL(a)
+        var downloadLink=document.createElement("a")
+        downloadLink.download="render.png"
+        downloadLink.href=objurl
+        downloadLink.click()
+    })
+})
+window.addEventListener("beforeunload",function(e){
+    e.preventDefault()//warn when closing
 })
 //-0.7497201102120534 0.028404976981026727 0.0000152587890625
 //-1.98547607421875 0 0.00006103515625
