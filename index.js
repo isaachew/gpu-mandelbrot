@@ -454,8 +454,9 @@ function createApproxTex(){
     var cval=curref;
     var zderiv=[1,0]
     var cderiv=[0,0]
-    zderivs=[null,zderiv]
-    cderivs=[null,cderiv]
+    var zderivs=[[0,0],zderiv]
+    var cderivs=[[0,0],cderiv]
+    var zmags=[0,zval.toFloatexp()[2]]
 
     var iterstack=[]
     curtex2=approxData
@@ -467,12 +468,14 @@ function createApproxTex(){
     for(var i=2;i<maxiters;i++){
         var fzval=zval.toFloats()
         zderiv=complexmul(complexmul(zderiv,[2,0]),fzval)
-        cderiv=complexadd(complexmul(complexmul(cderiv,[2,0]),fzval),[1,0])
         //derivative of z_i given z_1, with respect to z_1 or c
         //console.log(zderiv)
         zderivs.push(zderiv)
-        cderivs.push(cderiv)
-
+        if(i%10000==0)console.log(i+" iters (deriv)")
+        if((zderiv[0]==0&&zderiv[1]==0)||!Number.isFinite(zderiv[0]+zderiv[1])){
+            console.log("overflow/underflow")
+            break
+        }
         if(escaped==null){
             try{
                 zval=zval.mul(zval).add(cval)
@@ -480,21 +483,30 @@ function createApproxTex(){
                 escaped=i
             }
         }
-
         var feval=zval.toFloatexp()
         var curlmag=feval[2]+Math.log2(Math.hypot(feval[0],feval[1]))
+        zmags.push(curlmag)
         var curdmag=Math.log2(Math.hypot(zderiv[0],zderiv[1]))
         //curdmag/curlmag is the relative error
         //when higher, more error
         while(iterstack.length&&(curdmag-curlmag)>iterstack[iterstack.length-1][0]){
             var liters=iterstack.pop()
-            var zddiff=complexmul(zderiv,complexrecip(zderivs[liters[1]]))
+            var stopIter=i
+            var srecips=[0,0]
             var cddiff=[0,0]
+            var lliters=zmags[liters[1]]
             for(var j=liters[1]+1;j<=i;j++){//temporary quadratic complexity
-                var caddn=complexmul(zderiv,complexrecip(zderivs[j]))
-                if(maxSkipDist==7)console.log(zderiv,zderivs[j],caddn)
-                cddiff=complexadd(cddiff,caddn)
+                var caddn=complexrecip(zderivs[j])
+                if(maxSkipDist==7)console.log(zderivs[j],caddn)
+                srecips=complexadd(srecips,caddn)
+                cddiff=complexmul(srecips,zderivs[j])
+                var curcmag=Math.log2(Math.hypot(cddiff[0],cddiff[1]))
+                if(curcmag+lliters>40+curlmag){
+                    stopIter=j
+                    break
+                }
             }
+            var zddiff=complexmul(zderivs[stopIter],complexrecip(zderivs[liters[1]]))
             if(maxSkipDist==7)console.log(";")
             var flexp_zdiff=toFloatexp(zddiff)
             var flexp_cdiff=toFloatexp(cddiff)
@@ -504,10 +516,10 @@ function createApproxTex(){
             approxData[liters[1]*8+4]=flexp_cdiff[0]
             approxData[liters[1]*8+5]=flexp_cdiff[1]
             intApproxData[liters[1]*8+6]=flexp_cdiff[2]
-            intApproxData[liters[1]*8+7]=i-liters[1]
-            if(i-liters[1]>maxSkipDist){
-                console.log("skip "+(i-liters[1]))
-                maxSkipDist=i-liters[1]
+            intApproxData[liters[1]*8+7]=stopIter-liters[1]
+            if(stopIter-liters[1]>maxSkipDist){
+                console.log("skip "+(stopIter-liters[1]))
+                maxSkipDist=stopIter-liters[1]
             }
         }
         iterstack.push([(curdmag-curlmag),i])
