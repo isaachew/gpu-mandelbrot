@@ -215,7 +215,6 @@ void main(){
     int refiteroff=floatBitsToInt(posData2.x);
 
     bool isglitch=false;
-    float curlderiv=posData2.x;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
     floatexpPosition.exponent+=numzooms;
     float lcrad=log2(length(floatexpPosition.mantissa))+float(floatexpPosition.exponent);
@@ -233,22 +232,18 @@ void main(){
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-3+min(0,unperturbed.exponent);
+            numiters=-3;
             break;
         }
 
         float lrad_oldpos=log2(length(curpos.mantissa))+float(curpos.exponent);
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
-        float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
         if(lrad_unpert<lrad_oldpos){
                 //numiters+=23424;
                 //break;
                 refiteroff=numiters;//will be at 0 next iteration
                 curpos=add(curpos,curref);
                 curref=exp_complex(vec2(0.0,0.0),-21474836);
-        }
-        if(numiters>0){
-            curlderiv+=1.0+lrad_unpert;
         }
 
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
@@ -263,23 +258,6 @@ void main(){
             curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
             numiters++;
         }
-        /*
-        if(paletteparam==1){
-            float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
-            float maxld=lrad_cur;
-            float curlerr=maxld-curlderiv;
-            relerr=add(relerr,floatexp(1.0,int(curlerr)));
-            float lrelerr=log2(relerr.mantissa)+float(relerr.exponent);
-            //abs(precision*z) = error; sum the error up over iterations?
-            //total error>abs(pixelSize*z') then bailout
-            //precision is 2^-24
-            if(lrelerr>-glitchSensitivity){
-                isglitch=true;
-                numiters=-3-numiters;
-                break;
-            }
-        }
-        */
     }
     if(escaped||numiters<0){//escaped or glitch
         outputColour=vec4(intBitsToFloat(paletteparam==3?numiters+2024*numSkipped:numiters),0.0,0.0,0.0);
