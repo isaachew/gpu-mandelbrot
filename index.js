@@ -208,11 +208,11 @@ void main(){
         orbitInfo2=posData2;
         return;
     }
-    int numSkipped=floatBitsToInt(posData2.w);
-    floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
+    int numSkipped=floatBitsToInt(posData2.y);
 
     bool escaped=false;
     int numiters=olditers;
+    int refiteroff=floatBitsToInt(posData2.x);
 
     bool isglitch=false;
     float curlderiv=posData2.x;
@@ -225,7 +225,7 @@ void main(){
             numiters=-1;
             break;
         }
-        exp_complex curref=getRef(numiters);
+        exp_complex curref=getRef(numiters-refiteroff);
         exp_complex unperturbed=add(curpos,curref);
         if(unperturbed.exponent>=1){//normal bailout
             escaped=true;
@@ -240,13 +240,12 @@ void main(){
         float lrad_oldpos=log2(length(curpos.mantissa))+float(curpos.exponent);
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
         float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
-
-        if(lrad_unpert<lrad_ref-7.0){
+        if(lrad_unpert<lrad_oldpos){
                 //numiters+=23424;
                 //break;
-                isglitch=true;
-                numiters=-3+min(0,unperturbed.exponent);
-                break;
+                refiteroff=numiters;//will be at 0 next iteration
+                curpos=add(curpos,curref);
+                curref=exp_complex(vec2(0.0,0.0),-21474836);
         }
         if(numiters>0){
             curlderiv+=1.0+lrad_unpert;
@@ -254,16 +253,17 @@ void main(){
 
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
         int approxthreshold=curref.exponent-80;
-        approx_entry approxdata=getApproxEntry(numiters);
+        approx_entry approxdata=getApproxEntry(numiters-refiteroff);
         if(approxdata.numiters>0&&floatexpPosition.exponent<approxthreshold&&curpos.exponent<approxthreshold&&paletteparam>=2){//bla
             curpos=add(mul(curpos,approxdata.zderiv),mul(floatexpPosition,approxdata.cderiv));
             numiters+=approxdata.numiters;
             numSkipped+=approxdata.numiters;
+
         }else{
             curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
             numiters++;
         }
-
+        /*
         if(paletteparam==1){
             float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
             float maxld=lrad_cur;
@@ -279,6 +279,7 @@ void main(){
                 break;
             }
         }
+        */
     }
     if(escaped||numiters<0){//escaped or glitch
         outputColour=vec4(intBitsToFloat(paletteparam==3?numiters+2024*numSkipped:numiters),0.0,0.0,0.0);
@@ -287,7 +288,7 @@ void main(){
         outputColour=vec4(intBitsToFloat(mone),0.0,0.0,0.0);
     }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
-    orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),intBitsToFloat(numSkipped));
+    orbitInfo2=vec4(intBitsToFloat(refiteroff),intBitsToFloat(numSkipped),0.0,0.0);
     /*
     if(numiters==-1){
         outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
@@ -685,7 +686,6 @@ var tileOffX=300
 var tileOffY=300
 
 var readBuffer=new Uint8Array(4096)//where readpixels
-var glitchDetection=false
 var willRender=false
 var lastPause=0
 function startRender(){//start rendering a tile in WebGL
@@ -976,7 +976,6 @@ function renderTile(){
     var vertTiles=Math.ceil(curHeight/tileHeight)
     console.log(horizTiles)
     if(tileNum>=horizTiles*vertTiles){
-        if(glitchDetection)findNewRef()
         return
     }
     tileOffX=(tileNum%horizTiles)*tileWidth
