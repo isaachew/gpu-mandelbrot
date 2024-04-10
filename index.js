@@ -810,10 +810,8 @@ var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.122354
 function paletteFunc(x){
     if(x==-1)return -16777216//in set
     if(x==-2)return -16777216//not fully computed, may be in set
-    if(x==1234567)return -16777216//glitch
-    if(x<-2)return 16711680|-16777216
+    if(x<-2)return -1
     if(!isFinite(x))return -16777216
-    x+=palette.time||0
     let progress=x%palette.length/palette.length
     let palind=palette.stops.findIndex(a=>a.position>progress)
     let colprog=(progress-palette.stops[palind-1].position)/(palette.stops[palind].position-palette.stops[palind-1].position)
