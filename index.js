@@ -23,6 +23,21 @@ function createProgram(context,vertSource,fragSource){
     }
     return shaderProgram
 }
+//skip 3622, period 3623
+//z deriv: [2816879256891.291, 857557660233.6929]; works 1e-24
+//c deriv: [40470254079639.195, 8146744650592.539]; works 1e-24
+
+/*
+skip 404261 at 2**-700
+skip 173725 at 2**-390
+skip 115247 at 2**-310
+skip 58477 at 2**-210
+skip 29153 at 2**-160
+skip 14113 at 2**-130
+skip 10749 at 2**-110
+skip 254 at 2**-90
+skip 84 at 2**-70
+*/
 var mandelProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
@@ -39,10 +54,12 @@ precision highp int;
 in vec2 fractalPos;
 uniform int numzooms;//additional number of zooms to do after float
 
-uniform int maxiters;//make sure small otherwise GPU will crash
+uniform int renderediters;//make sure small otherwise GPU will crash
+uniform int maxiters;
 uniform highp sampler2D lastorbit;//information about previous iterations: x, y, exp, number of iterations
 uniform highp sampler2D lastorbit2;//glitch detection
 uniform highp sampler2D reference;//reference orbit
+uniform highp sampler2D approxdata;//approx
 uniform float glitchSensitivity;
 uniform int paletteparam;
 layout(location=0) out vec4 outputColour;//colour
@@ -164,6 +181,21 @@ exp_complex getRef(int iters){
     return exp_complex(curValue.xy,int(curValue.z));
 }
 
+struct approx_entry{
+    exp_complex zderiv;
+    exp_complex cderiv;
+    int numiters;
+};
+
+approx_entry getApproxEntry(int iters){
+    vec4 curValue1=texelFetch(approxdata,ivec2((iters*2)&16383,(iters*2)>>14),0);
+    vec4 curValue2=texelFetch(approxdata,ivec2((iters*2+1)&16383,(iters*2+1)>>14),0);
+    exp_complex zderiv=exp_complex(curValue1.xy,floatBitsToInt(curValue1.z));
+    exp_complex cderiv=exp_complex(curValue2.xy,floatBitsToInt(curValue2.z));
+    int nskipped=floatBitsToInt(curValue2.w);
+    return approx_entry(zderiv,cderiv,nskipped);
+}
+
 void main(){
     vec4 posData=texelFetch(lastorbit,ivec2(gl_FragCoord.xy),0);
     vec4 posData2=texelFetch(lastorbit2,ivec2(gl_FragCoord.xy),0);
@@ -176,68 +208,65 @@ void main(){
         orbitInfo2=posData2;
         return;
     }
-    floatexp relerr=floatexp(posData2.y,floatBitsToInt(posData2.z));
+    int numSkipped=floatBitsToInt(posData2.y);
 
-    int numiters=-1;
+    bool escaped=false;
+    int numiters=olditers;
+    int refiteroff=floatBitsToInt(posData2.x);
+
     bool isglitch=false;
-    float curlderiv=posData2.x;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
     floatexpPosition.exponent+=numzooms;
     float lcrad=log2(length(floatexpPosition.mantissa))+float(floatexpPosition.exponent);
-    for(int i=0;i<maxiters;i++){
-        exp_complex curref=getRef(i+olditers);
+
+    for(int i=0;i<renderediters;i++){
+        if(numiters>maxiters){//too many iters, no reference
+            numiters=-1;
+            break;
+        }
+        exp_complex curref=getRef(numiters-refiteroff);
         exp_complex unperturbed=add(curpos,curref);
-        if(unperturbed.exponent>=1){
-            numiters=i;
+        if(unperturbed.exponent>=1){//normal bailout
+            escaped=true;
             break;
         }
         if(curref.exponent>=1){
             isglitch=true;
-            numiters=-3+min(0,unperturbed.exponent);
+            numiters=-3;
             break;
         }
 
         float lrad_oldpos=log2(length(curpos.mantissa))+float(curpos.exponent);
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
-        float lrad_ref=log2(length(curref.mantissa))+float(curref.exponent);
-
-        if(lrad_unpert<lrad_ref-7.0){
+        if(lrad_unpert<lrad_oldpos){
                 //numiters+=23424;
                 //break;
-                isglitch=true;
-                numiters=-3+min(0,unperturbed.exponent);
-                break;
-        }
-
-
-        if(i>0||olditers>0){
-            curlderiv+=1.0+lrad_unpert;
+                refiteroff=numiters;//will be at 0 next iteration
+                curpos=add(curpos,curref);
+                curref=exp_complex(vec2(0.0,0.0),-21474836);
         }
 
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
-        curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
+        int approxthreshold=curref.exponent-80;
+        approx_entry approxdata=getApproxEntry(numiters-refiteroff);
+        if(approxdata.numiters>0&&floatexpPosition.exponent<approxthreshold&&curpos.exponent<approxthreshold&&paletteparam>=2){//bla
+            curpos=add(mul(curpos,approxdata.zderiv),mul(floatexpPosition,approxdata.cderiv));
+            numiters+=approxdata.numiters;
+            numSkipped+=approxdata.numiters;
 
-        if(paletteparam==1){
-            float lrad_cur=log2(length(curpos.mantissa))+float(curpos.exponent);
-            float maxld=lrad_cur;
-            float curlerr=maxld-curlderiv;
-            relerr=add(relerr,floatexp(1.0,int(curlerr)));
-            float lrelerr=log2(relerr.mantissa)+float(relerr.exponent);
-            //abs(precision*z) = error; sum the error up over iterations?
-            //total error>abs(pixelSize*z') then bailout
-            //precision is 2^-24
-            if(lrelerr>-glitchSensitivity){
-                isglitch=true;
-                numiters=-3-(i+olditers);
-                break;
-            }
+        }else{
+            curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
+            numiters++;
         }
     }
-    if(numiters>=0)numiters+=olditers;
-    outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
-    if(numiters==-1)numiters=maxiters+olditers;
+    if(escaped||numiters<0){//escaped or glitch
+        outputColour=vec4(intBitsToFloat(paletteparam==3?numiters+2024*numSkipped:numiters),0.0,0.0,0.0);
+    }else{
+        highp int mone=-1;
+        outputColour=vec4(intBitsToFloat(mone),0.0,0.0,0.0);
+    }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
-    orbitInfo2=vec4(curlderiv,relerr.mantissa,intBitsToFloat(relerr.exponent),0.0);
+    orbitInfo2=vec4(intBitsToFloat(refiteroff),intBitsToFloat(numSkipped),0.0,0.0);
     /*
     if(numiters==-1){
         outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
@@ -336,6 +365,126 @@ function genReference(cval){//write floatexp
     }
     glcont.activeTexture(glcont.TEXTURE0)
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
+    var calcEnd=performance.now()
+    console.log((calcEnd-calcStart)+" ms to calc "+(escaped==null?maxiters:escaped)+" iterations")
+}
+function complexmul(a,b){
+    return [a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]]
+}
+function complexadd(a,b){
+    return [a[0]+b[0],a[1]+b[1]]
+}
+function complexsub(a,b){
+    return [a[0]-b[0],a[1]-b[1]]
+}
+function complexrecip(a){
+    var factor=Math.floor(Math.log2(Math.hypot(...a)))
+    var dvd=[a[0]/(2**factor),a[1]/(2**factor)]
+    var res=[dvd[0]/(dvd[0]*dvd[0]+dvd[1]*dvd[1]),-dvd[1]/(dvd[0]*dvd[0]+dvd[1]*dvd[1])]
+    res[0]/=2**factor
+    res[1]/=2**factor
+    return res
+}
+function toFloatexp([x,y]){
+    var factor=Math.floor(Math.log2(Math.hypot(x,y)))
+    if(Number.isNaN(factor))factor=-214748364
+    return [x*(2**-factor),y*(2**-factor),factor]
+}
+//texture for approximation information
+var approxtex=glcont.createTexture()
+glcont.activeTexture(glcont.TEXTURE6)
+glcont.bindTexture(glcont.TEXTURE_2D,approxtex)
+enableTexture()
+//reference is in texture unit 6
+glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"approxdata"),6)
+
+function createApproxTex(){
+    var approxData=new Float32Array(Math.ceil(maxiters*2/16384)*16384*4)//floatexp, num iters skipped
+    var intApproxData=new Int32Array(approxData.buffer)
+    var zval=curref;
+    var cval=curref;
+    var zderiv=[1,0]
+    var cderiv=[0,0]
+    var zderivs=[[0,0],zderiv]
+    var cderivs=[[0,0],cderiv]
+    var zmags=[0,zval.toFloatexp()[2]]
+
+    var iterstack=[]
+    curtex2=approxData
+    var calcStart=performance.now()
+    //var occurred=new Map()
+    //var period=null
+    var escaped=null
+    var maxSkipDist=0
+    for(var i=2;i<maxiters;i++){
+        var fzval=zval.toFloats()
+        zderiv=complexmul(complexmul(zderiv,[2,0]),fzval)
+        //derivative of z_i given z_1, with respect to z_1 or c
+        //console.log(zderiv)
+        zderivs.push(zderiv)
+        if(i%10000==0)console.log(i+" iters (deriv)")
+        if((zderiv[0]==0&&zderiv[1]==0)||!Number.isFinite(zderiv[0]+zderiv[1])){
+            console.log("overflow/underflow")
+            break
+        }
+        if(escaped==null){
+            try{
+                zval=zval.mul(zval).add(cval)
+            }catch{
+                escaped=i
+            }
+        }
+        var feval=zval.toFloatexp()
+        var curlmag=feval[2]+Math.log2(Math.hypot(feval[0],feval[1]))
+        zmags.push(curlmag)
+        var curdmag=Math.log2(Math.hypot(zderiv[0],zderiv[1]))
+        //curdmag/curlmag is the relative error
+        //when higher, more error
+        while(iterstack.length&&(curdmag-curlmag)>iterstack[iterstack.length-1][0]){
+            var liters=iterstack.pop()
+            var stopIter=i
+            var srecips=[0,0]
+            var cddiff=[0,0]
+            var lliters=zmags[liters[1]]
+            for(var j=liters[1]+1;j<=i;j++){//temporary quadratic complexity
+                var caddn=complexrecip(zderivs[j])
+                if(maxSkipDist==7)console.log(zderivs[j],caddn)
+                srecips=complexadd(srecips,caddn)
+                cddiff=complexmul(srecips,zderivs[j])
+                var curcmag=Math.log2(Math.hypot(cddiff[0],cddiff[1]))
+                if(curcmag+lliters>40+curlmag){
+                    stopIter=j
+                    break
+                }
+            }
+            var zddiff=complexmul(zderivs[stopIter],complexrecip(zderivs[liters[1]]))
+            if(maxSkipDist==7)console.log(";")
+            var flexp_zdiff=toFloatexp(zddiff)
+            var flexp_cdiff=toFloatexp(cddiff)
+            approxData[liters[1]*8]=flexp_zdiff[0]
+            approxData[liters[1]*8+1]=flexp_zdiff[1]
+            intApproxData[liters[1]*8+2]=flexp_zdiff[2]
+            approxData[liters[1]*8+4]=flexp_cdiff[0]
+            approxData[liters[1]*8+5]=flexp_cdiff[1]
+            intApproxData[liters[1]*8+6]=flexp_cdiff[2]
+            intApproxData[liters[1]*8+7]=stopIter-liters[1]
+            if(stopIter-liters[1]>maxSkipDist){
+                console.log("skip "+(stopIter-liters[1]))
+                maxSkipDist=stopIter-liters[1]
+            }
+        }
+        iterstack.push([(curdmag-curlmag),i])
+        /*
+        if(occurred.has(""+[zx,zy])&&period==null){
+            console.log("found",occurred.get(""+[zx,zy]),i)
+            period=occurred.get(""+[zx,zy])-i
+        }
+        occurred.set(""+[zx,zy],i)
+        */
+    }
+    console.log(maxSkipDist+" iters max skipped")
+    glcont.activeTexture(glcont.TEXTURE6)
+    glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGBA32F,Math.min(maxiters*2,16384),Math.ceil(maxiters*2/16384),0,glcont.RGBA,glcont.FLOAT,approxData)
     var calcEnd=performance.now()
     console.log((calcEnd-calcStart)+" ms to calc "+(escaped==null?maxiters:escaped)+" iterations")
 }
@@ -488,7 +637,6 @@ var tileOffX=300
 var tileOffY=300
 
 var readBuffer=new Uint8Array(4096)//where readpixels
-var glitchDetection=false
 var willRender=false
 var lastPause=0
 function startRender(){//start rendering a tile in WebGL
@@ -516,7 +664,8 @@ function startRender(){//start rendering a tile in WebGL
     glcont.uniform2fv(offsetIndex,curOffset)
 
     glcont.uniform1f(scaleIndex,ciscale*tileWidth/curWidth)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"renderediters"),Math.min(maxiters,maxstepiters))
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),maxiters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"numzooms"),clscale)
     glcont.uniform1f(sensitivityIndex,Math.log2(glitchSensitivity/curzoom))
     lastCanvasWrite=0
@@ -547,7 +696,7 @@ function renderStep(){
     }
     var drawStart=performance.now()
     glcont.useProgram(mandelProgram)
-    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"maxiters"),renderediters)
+    glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"renderediters"),renderediters)
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit"),swapTextures?4:2)//last orbit in texture unit 2 or 4
     glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"lastorbit2"),swapTextures?5:3)//last orbit in texture unit 3 or 5
     glcont.bindFramebuffer(glcont.FRAMEBUFFER,curFramebuffer)
@@ -635,10 +784,8 @@ var palette={"stops":[{"position":0,"colour":[138,220,255]},{"position":0.122354
 function paletteFunc(x){
     if(x==-1)return -16777216//in set
     if(x==-2)return -16777216//not fully computed, may be in set
-    if(x==1234567)return -16777216//glitch
-    if(x<-2)return x*10|0
+    if(x<-2)return -1
     if(!isFinite(x))return -16777216
-    x+=palette.time||0
     let progress=x%palette.length/palette.length
     let palind=palette.stops.findIndex(a=>a.position>progress)
     let colprog=(progress-palette.stops[palind-1].position)/(palette.stops[palind].position-palette.stops[palind-1].position)
@@ -732,6 +879,7 @@ function findNewRef(){//remove glitches with size < 15
                         var pCoordIndex=k[1]*curWidth+k[0]
                         curData[pCoordIndex]=1234567
                     }
+
                 }else if(pointSet.length>glitchSize){
                     var avgPoint=[0,0]
                     for(var k of pointSet){
@@ -780,7 +928,6 @@ function renderTile(){
     var vertTiles=Math.ceil(curHeight/tileHeight)
     console.log(horizTiles)
     if(tileNum>=horizTiles*vertTiles){
-        if(glitchDetection)findNewRef()
         return
     }
     tileOffX=(tileNum%horizTiles)*tileWidth
