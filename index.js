@@ -23,21 +23,6 @@ function createProgram(context,vertSource,fragSource){
     }
     return shaderProgram
 }
-//skip 3622, period 3623
-//z deriv: [2816879256891.291, 857557660233.6929]; works 1e-24
-//c deriv: [40470254079639.195, 8146744650592.539]; works 1e-24
-
-/*
-skip 404261 at 2**-700
-skip 173725 at 2**-390
-skip 115247 at 2**-310
-skip 58477 at 2**-210
-skip 29153 at 2**-160
-skip 14113 at 2**-130
-skip 10749 at 2**-110
-skip 254 at 2**-90
-skip 84 at 2**-70
-*/
 var mandelProgram=createProgram(glcont,`#version 300 es
 precision highp float;
 in vec2 position;//-1 to 1
@@ -64,7 +49,7 @@ uniform float glitchSensitivity;
 uniform int paletteparam;
 layout(location=0) out vec4 outputColour;//colour
 layout(location=1) out vec4 orbitInfo;//output x, y, exp, number of iterations
-layout(location=2) out vec4 orbitInfo2;//output x, y, exp, number of iterations
+layout(location=2) out vec4 orbitInfo2;//output reference offset, derivative
 
 vec2 complexmul(vec2 a,vec2 b){
     return vec2(a.x*b.x-a.y*b.y,a.x*b.y+a.y*b.x);
@@ -559,7 +544,7 @@ function getDecimalValue(num,digits=Number(fixedFactor)+1){
     return st
 }
 function fromDecimalValue(val){
-    val=val.replace(/[^0-9.]/g,"")
+    val=val.replace(/[^\-0-9.]/g,"")
     var num=0n
     var isNegative=false
     if(val[0]=="-"){
