@@ -410,6 +410,7 @@ function getDecimalValue(num,digits=Number(fixedFactor)+1){
     return st
 }
 function fromDecimalValue(val){
+    val=val.replace(/[^0-9.]/g,"")
     var num=0n
     var isNegative=false
     if(val[0]=="-"){
@@ -846,6 +847,7 @@ document.getElementById("gotoLocation").addEventListener("click",a=>{
     var nxpos=document.getElementById("xPosition").value
     var nypos=document.getElementById("yPosition").value
     curpos=new BigComplex(nxpos,nypos)
+    render()
 })
 
 document.getElementById("downloadButton").addEventListener("click",e=>{
