@@ -46,7 +46,7 @@ uniform highp sampler2D lastorbit2;//glitch detection
 uniform highp sampler2D reference;//reference orbit
 uniform highp sampler2D approxdata;//approx
 uniform float glitchSensitivity;
-uniform int paletteparam;
+uniform int renderflags;
 layout(location=0) out vec4 outputColour;//colour
 layout(location=1) out vec4 orbitInfo;//output x, y, exp, number of iterations
 layout(location=2) out vec4 orbitInfo2;//output reference offset, derivative
@@ -196,6 +196,7 @@ void main(){
     bool escaped=false;
     int numiters=olditers;
     int refiteroff=floatBitsToInt(posData2.x);
+    approx_entry approxdata;
 
     exp_complex curderiv=exp_complex(posData2.yz,floatBitsToInt(posData2.w));
     if(posData2.yz==vec2(0.0,0.0))curderiv.exponent=-21474836;
@@ -234,26 +235,34 @@ void main(){
 
         //exp_complex refoffset=mulpow2(1,mul(curref,curpos));
         int approxthreshold=curref.exponent-80;
-        approx_entry approxdata=getApproxEntry(numiters-refiteroff);
-        if(approxdata.numiters>0&&floatexpPosition.exponent<approxthreshold&&curpos.exponent<approxthreshold&&paletteparam>=2){//bla
+        approxdata=getApproxEntry(numiters-refiteroff);
+        bool do_bla=false;
+        if((renderflags&2)!=0){
+            do_bla=approxdata.numiters>0&&floatexpPosition.exponent<approxthreshold&&curpos.exponent<approxthreshold;
+        }
+        if(do_bla){
+            if((renderflags&1)!=0)curderiv=mul(curderiv,approxdata.zderiv);
             curpos=add(mul(curpos,approxdata.zderiv),mul(floatexpPosition,approxdata.cderiv));
             numiters+=approxdata.numiters;
 
         }else{
-            curderiv=add(mulpow2(1,mul(curderiv,add(curpos,curref))),exp_complex(vec2(1.0,0.0),0));
+            if((renderflags&1)!=0)curderiv=add(mulpow2(1,mul(curderiv,add(curpos,curref))),exp_complex(vec2(1.0,0.0),0));
             curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
             numiters++;
         }
     }
     if(escaped||numiters<0){//escaped or glitch
-        exp_complex curref=getRef(numiters-refiteroff);
-        vec2 cmant=add(curpos,curref).mantissa;
-        vec2 derivmant=curderiv.mantissa;
-        derivmant.y=-derivmant.y;
-        vec2 totdir=complexmul(cmant,derivmant);//z/z', direction
-        float ycomp=totdir.y/length(totdir);
-        if(paletteparam==1)outputColour=vec4(intBitsToFloat(numiters+(65536*int(atan(totdir.y,totdir.x)/3.1415926535*127.99+256.0)&16711680)),0.0,0.0,0.0);
-        else outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
+        if((renderflags&1)!=0){
+            exp_complex curref=getRef(numiters-refiteroff);
+            vec2 cmant=add(curpos,curref).mantissa;
+            vec2 derivmant=curderiv.mantissa;
+            derivmant.y=-derivmant.y;
+            vec2 totdir=complexmul(cmant,derivmant);//z/z', direction
+            float ycomp=totdir.y/length(totdir);
+            outputColour=vec4(intBitsToFloat(numiters+(65536*int(atan(totdir.y,totdir.x)/3.1415926535*127.99+256.0)&16711680)),0.0,0.0,0.0);
+        }else{
+            outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
+        }
     }else{
         highp int mone=-1;
         outputColour=vec4(intBitsToFloat(mone),0.0,0.0,0.0);
@@ -360,6 +369,7 @@ function genReference(cval){//write floatexp
     glcont.texImage2D(glcont.TEXTURE_2D,0,glcont.RGB32F,Math.min(maxiters,16384),Math.ceil(maxiters/16384),0,glcont.RGB,glcont.FLOAT,farr)
     var calcEnd=performance.now()
     console.log((calcEnd-calcStart)+" ms to calc "+(escaped==null?maxiters:escaped)+" iterations")
+    if(useBLA)createApproxTex()
 }
 function complexmul(a,b){
     return [a[0]*b[0]-a[1]*b[1],a[0]*b[1]+a[1]*b[0]]
@@ -451,7 +461,7 @@ function createApproxTex(){
                 }
             }
             var zddiff=complexmul(zderivs[stopIter],complexrecip(zderivs[liters[1]]))
-            if(maxSkipDist==7)console.log(";")
+
             var flexp_zdiff=toFloatexp(zddiff)
             var flexp_cdiff=toFloatexp(cddiff)
             approxData[liters[1]*8]=flexp_zdiff[0]
@@ -532,7 +542,7 @@ glcont.framebufferTexture2D(glcont.FRAMEBUFFER,glcont.COLOR_ATTACHMENT2,glcont.T
 
 
 console.timeEnd("hi")
-var fixedFactor=896n
+var fixedFactor=960n
 function getDecimalValue(num,digits=Number(fixedFactor)+1){
     var st=""
     if(num<0n){
@@ -618,6 +628,7 @@ class BigComplex{
 var curpos=new BigComplex(0n,0n),curzoom=2,curval=0,glitchSensitivity=1/(2**24)*512/3,maxiters=16384
 var curref=new BigComplex(0n,0n)//e-6
 var maxstepiters=10000,curstepiters=100,curiters=0
+var useBLA=false
 genReference(new BigComplex(0,0))
 var swapTextures=false
 
@@ -635,9 +646,9 @@ var lastPause=0
 function startRender(){//start rendering a tile in WebGL
     curstepiters=100
     numReferences++
-    if(curzoom<=1e-250){
+    if(curzoom<=1e-270){
         console.log("limit")
-        curzoom=1e-250
+        curzoom=1e-270
     }
     curiters=0
     var pnow=performance.now()
@@ -976,17 +987,23 @@ document.addEventListener("keydown",e=>{
     }
     if(e.key=="e"){
         curval=(curval+1)%4
-        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"paletteparam"),curval/**curzoom*/)
+        glcont.uniform1i(glcont.getUniformLocation(mandelProgram,"renderflags"),curval)
         render()
     }
     if(e.key=="x"){
         render()
     }
 })
+document.getElementById("maxIterations").addEventListener("change",a=>{
+    maxiters=+a.target.value
+    genReference(curref)
+})
 document.getElementById("gotoLocation").addEventListener("click",a=>{
     var nxpos=document.getElementById("xPosition").value
     var nypos=document.getElementById("yPosition").value
     curpos=new BigComplex(nxpos,nypos)
+    var nzoom=document.getElementById("zoomWidth").value
+    if(nzoom)curzoom=+nzoom
     render()
 })
 
