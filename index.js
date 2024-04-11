@@ -184,8 +184,8 @@ approx_entry getApproxEntry(int iters){
 void main(){
     vec4 posData=texelFetch(lastorbit,ivec2(gl_FragCoord.xy),0);
     vec4 posData2=texelFetch(lastorbit2,ivec2(gl_FragCoord.xy),0);
-    if(posData.xy==vec2(0.0,0.0))posData.z=-21474836.0;
     exp_complex curpos=exp_complex(posData.xy,int(posData.z));
+    if(posData.xy==vec2(0.0,0.0))curpos.exponent=-21474836;
     int olditers=floatBitsToInt(posData.w);
     if(olditers<0){//stopped already
         outputColour=vec4(intBitsToFloat(olditers),0.0,0.0,0.0);
@@ -193,11 +193,12 @@ void main(){
         orbitInfo2=posData2;
         return;
     }
-    int numSkipped=floatBitsToInt(posData2.y);
-
     bool escaped=false;
     int numiters=olditers;
     int refiteroff=floatBitsToInt(posData2.x);
+
+    exp_complex curderiv=exp_complex(posData2.yz,floatBitsToInt(posData2.w));
+    if(posData2.yz==vec2(0.0,0.0))curderiv.exponent=-21474836;
 
     bool isglitch=false;
     exp_complex floatexpPosition=tofloatexp(fractalPos);
@@ -211,7 +212,7 @@ void main(){
         }
         exp_complex curref=getRef(numiters-refiteroff);
         exp_complex unperturbed=add(curpos,curref);
-        if(unperturbed.exponent>=1){//normal bailout
+        if(unperturbed.exponent>=10){//normal bailout
             escaped=true;
             break;
         }
@@ -237,21 +238,28 @@ void main(){
         if(approxdata.numiters>0&&floatexpPosition.exponent<approxthreshold&&curpos.exponent<approxthreshold&&paletteparam>=2){//bla
             curpos=add(mul(curpos,approxdata.zderiv),mul(floatexpPosition,approxdata.cderiv));
             numiters+=approxdata.numiters;
-            numSkipped+=approxdata.numiters;
 
         }else{
+            curderiv=add(mulpow2(1,mul(curderiv,add(curpos,curref))),exp_complex(vec2(1.0,0.0),0));
             curpos=add(mul(add(mulpow2(1,curref),curpos),curpos),floatexpPosition);
             numiters++;
         }
     }
     if(escaped||numiters<0){//escaped or glitch
-        outputColour=vec4(intBitsToFloat(paletteparam==3?numiters+2024*numSkipped:numiters),0.0,0.0,0.0);
+        exp_complex curref=getRef(numiters-refiteroff);
+        vec2 cmant=add(curpos,curref).mantissa;
+        vec2 derivmant=curderiv.mantissa;
+        derivmant.y=-derivmant.y;
+        vec2 totdir=complexmul(cmant,derivmant);//z/z', direction
+        float ycomp=totdir.y/length(totdir);
+        if(paletteparam==1)outputColour=vec4(intBitsToFloat(numiters+(65536*int(atan(totdir.y,totdir.x)/3.1415926535*127.99+256.0)&16711680)),0.0,0.0,0.0);
+        else outputColour=vec4(intBitsToFloat(numiters),0.0,0.0,0.0);
     }else{
         highp int mone=-1;
         outputColour=vec4(intBitsToFloat(mone),0.0,0.0,0.0);
     }
     orbitInfo=vec4(curpos.mantissa.xy,float(curpos.exponent),intBitsToFloat(numiters));
-    orbitInfo2=vec4(intBitsToFloat(refiteroff),intBitsToFloat(numSkipped),0.0,0.0);
+    orbitInfo2=vec4(intBitsToFloat(refiteroff),curderiv.mantissa,intBitsToFloat(curderiv.exponent));
     /*
     if(numiters==-1){
         outputColour=vec4(curpos.mantissa.x,curpos.mantissa.y,0.5,1.0);
