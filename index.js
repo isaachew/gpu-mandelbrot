@@ -646,9 +646,9 @@ var lastPause=0
 function startRender(){//start rendering a tile in WebGL
     curstepiters=100
     numReferences++
-    if(curzoom<=1e-270){
+    if(curzoom<=2**-900){
         console.log("limit")
-        curzoom=1e-270
+        curzoom=2**-900
     }
     curiters=0
     var pnow=performance.now()
