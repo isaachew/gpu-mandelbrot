@@ -217,15 +217,10 @@ void main(){
             escaped=true;
             break;
         }
-        if(curref.exponent>=1){
-            isglitch=true;
-            numiters=-3;
-            break;
-        }
 
         float lrad_oldpos=log2(length(curpos.mantissa))+float(curpos.exponent);
         float lrad_unpert=log2(length(unperturbed.mantissa))+float(unperturbed.exponent);
-        if(lrad_unpert<lrad_oldpos){
+        if(lrad_unpert<lrad_oldpos||curref.exponent>5){//rebase if going to be out of bounds
                 //numiters+=23424;
                 //break;
                 refiteroff=numiters;//will be at 0 next iteration
@@ -657,10 +652,12 @@ function startRender(){//start rendering a tile in WebGL
     var clscale=Math.floor(Math.log2(curzoom))
     var ciscale=curzoom*2**-clscale
     //console.log("offset ",[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale])
+    /*
     console.log("scale ",ciscale)
     console.log("iters ",maxiters)
     console.log("zooms ",clscale)
     console.log("sensitivity ",Math.log2(glitchSensitivity/curzoom))
+    */
     glcont.useProgram(mandelProgram)
     var curOffset=[fcoords[0]*2**-clscale,fcoords[1]*2**-clscale]
     curOffset[0]+=2*(tileOffX+tileWidth/2-curWidth/2)/curWidth*ciscale
@@ -692,7 +689,7 @@ function renderStep(){
     var renderediters=Math.min(curstepiters,maxiters-curiters)
     if(renderediters==0){
         var renderEnd=performance.now()
-        console.log(`tile ${tileNum} rendered in ${renderEnd-renderStart} ms`)
+        //console.log(`tile ${tileNum} rendered in ${renderEnd-renderStart} ms`)
         writeTile()
         tileNum++
         setTimeout(renderTile)
@@ -732,7 +729,7 @@ function renderStep(){
     //console.log(drawEnd-drawStart+"ms for "+renderediters+" iterations")
     var curTime=performance.now()
     if(curTime-lastCanvasWrite>2000){
-        console.log("canvas")
+        //console.log("canvas")
         writeTile()
         lastCanvasWrite=performance.now()
     }
@@ -930,7 +927,7 @@ function findNewRef(){//remove glitches with size < 15
 function renderTile(){
     var horizTiles=Math.ceil(curWidth/tileWidth)
     var vertTiles=Math.ceil(curHeight/tileHeight)
-    console.log(horizTiles)
+    //console.log(horizTiles)
     if(tileNum>=horizTiles*vertTiles){
         return
     }
@@ -940,6 +937,13 @@ function renderTile(){
     startRender()
 }
 function render(){
+    var posDiff=curpos.sub(curref).toFloats()
+    console.log("dist of "+Math.hypot(...posDiff)/curzoom)
+    if(Math.hypot(...posDiff)>1000*curzoom){
+        console.log("too far")
+        curref=curpos
+        genReference(curref)
+    }
     resetRender()
     tileNum=0
     renderTile()
