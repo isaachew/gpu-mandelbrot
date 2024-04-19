@@ -944,6 +944,8 @@ function render(){
         curref=curpos
         genReference(curref)
     }
+    document.getElementById("xPosOut").value=getDecimalValue(curpos.real,Math.max(10-Math.log10(curzoom),10))
+    document.getElementById("yPosOut").value=getDecimalValue(curpos.imag,Math.max(10-Math.log10(curzoom),10))
     resetRender()
     tileNum=0
     renderTile()
